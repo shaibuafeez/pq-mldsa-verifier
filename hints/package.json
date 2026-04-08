@@ -1,0 +1,23 @@
+{
+  "name": "pq-mldsa-hints",
+  "version": "0.1.0",
+  "description": "Off-chain hint generator for ML-DSA-65 optimistic verification",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "bun test",
+    "demo": "bun run src/demo.ts"
+  },
+  "dependencies": {
+    "@noble/post-quantum": "^0.5.2",
+    "@noble/hashes": "^1.7.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
