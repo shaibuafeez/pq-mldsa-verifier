@@ -12,6 +12,11 @@ Prepare your smart contracts for the post-quantum era — no precompiles, no WAS
 
 > **Warning**: This is experimental cryptographic software. It has not been audited. Do not use in production without independent security review.
 
+> **Live on Base Sepolia:** the full verifier is deployed at
+> [`0xe42C6eF5b71834930faC33780bE730F7112a3a6B`](https://sepolia.basescan.org/address/0xe42C6eF5b71834930faC33780bE730F7112a3a6B)
+> and verifies a real ML-DSA-65 signature on-chain (returns `true` for the
+> @noble vector, `false` for a wrong message). See [`DEPLOYMENTS.md`](DEPLOYMENTS.md).
+
 ## The Problem
 
 Every Ethereum wallet today signs with ECDSA. A sufficiently powerful quantum computer breaks ECDSA completely. [NIST standardized ML-DSA (FIPS 204)](https://csrc.nist.gov/pubs/fips/204/final) in August 2024 as the post-quantum replacement.
@@ -20,7 +25,7 @@ Every Ethereum wallet today signs with ECDSA. A sufficiently powerful quantum co
 
 1. **Chain-locked.** Their ML-DSA-65 verifier runs in Rust on Arbitrum Stylus (WASM). It cannot deploy to Ethereum, Base, Optimism, Polygon, or any other EVM chain.
 
-2. **No L1 path.** Full ML-DSA-65 verification costs ~163M gas — 5x beyond Ethereum's 30M block gas limit. Even if you ported the math, you couldn't execute it.
+2. **No L1 path.** Full ML-DSA-65 verification costs ~163M gas — ~4.5x beyond Ethereum's ~36M block gas limit. Even if you ported the math, you couldn't execute it in a single L1 transaction.
 
 Every non-Arbitrum chain is locked out of post-quantum wallet security.
 
@@ -85,7 +90,7 @@ contract MyWallet {
 |---------|-----|-----------|--------|--------|
 | Tetration `dilithium-solidity` | >30M | ML-DSA-44 only | EVM | Broken SHAKE, abandoned since 2023 |
 | quantumFDN Stylus verifier | 374K | ML-DSA-65 | Arbitrum only | Production |
-| **This (full)** | **163M** | **ML-DSA-65** | **Any EVM** | 41 tests, cross-validated, production-ready |
+| **This (full)** | **163M** | **ML-DSA-65** | **Any EVM** | 58 tests, cross-validated, live on Base Sepolia |
 | **This (optimistic)** | **~200K submit** | **ML-DSA-65** | **Any EVM** | PoC — per-step re-execution proven; linkage pending |
 
 ## Architecture
@@ -243,7 +248,7 @@ All arithmetic happens in the polynomial ring `Z_q[X]/(X^256 + 1)` with `q = 8,3
 
 The EVM's `keccak256` opcode computes Keccak-256: fixed 32-byte output, `0x01` padding. ML-DSA requires SHAKE-128 and SHAKE-256: variable-length output, `0x1F` padding, different rates.
 
-Since the EVM doesn't expose the raw Keccak-f[1600] permutation, we implement all 24 rounds (theta, rho, pi, chi, iota) from scratch in Solidity. This is ~80% of the gas cost. A future EVM precompile for SHAKE would drop full verification from 163M to ~30M gas.
+Since the EVM doesn't expose the raw Keccak-f[1600] permutation, we implement all 24 rounds (theta, rho, pi, chi, iota) from scratch in Solidity. This is ~80% of the gas cost. A future EVM SHAKE precompile would drop full verification from 163M to ~30M gas; a *full* ML-DSA precompile — proposed in [EIP-8051](https://eips.ethereum.org/EIPS/eip-8051) — targets ~3,000 gas, at which point this Solidity implementation becomes the portable fallback/reference for chains that haven't adopted it.
 
 ## Cross-Implementation Compatibility
 
@@ -272,12 +277,18 @@ const hints = generateHints(publicKey, message, signature);
 // hints.isValid     → signature validity check
 ```
 
-| Steps | Operation | Input | Output |
-|-------|-----------|-------|--------|
-| 0-29 | ExpandA matrix entries | rho + indices (34 B) | 256 coefficients (768 B) |
-| 30 | `tr = SHAKE-256(pk)` | public key (1952 B) | 64 B |
-| 31 | `mu = SHAKE-256(tr \|\| M')` | tr + message (98 B) | 64 B |
-| 32 | `SampleInBall(c_tilde)` | c_tilde (48 B) | 256 coefficients (768 B) |
+All 135 steps are emitted, each a single primitive that `MLDSAOptimistic.executeStep`
+re-executes on-chain (parity enforced by `test/OptimisticHintParity.t.sol`):
+
+| Steps | Opcode | Operation | Input | Output |
+|-------|--------|-----------|-------|--------|
+| 0-29 | EXPANDA | ExpandA matrix entries (SHAKE-128) | rho + indices (34 B) | 256 coeffs (768 B) |
+| 30-31 | SHAKE256_64 | `tr`, then `mu = SHAKE-256(tr \|\| M')` | pk / tr+message | 64 B |
+| 32 | SAMPLEINBALL | `SampleInBall(c_tilde)` | c_tilde (48 B) | 256 coeffs (768 B) |
+| 33–92… | NTT / SCALE2D | `NTT(c)`, `NTT(z[j])`, `NTT(t1[i]·2^d)` | 1 poly (768 B) | 1 poly (768 B) |
+| …  | MUL / ADD / SUB | `A·z` products + accumulation, `c·t1`, subtraction | 2 polys (1536 B) | 1 poly (768 B) |
+| … | INTT | `InvNTT(w_approx[i])` | 1 poly (768 B) | 1 poly (768 B) |
+| …134 | USEHINT | `UseHint(h[i], w_approx[i])` | hint + w (1536 B) | w1 poly (768 B) |
 
 ## Goals
 
@@ -289,8 +300,8 @@ const hints = generateHints(publicKey, message, signature);
 - [x] Off-chain hint generator with Merkle commitment
 - [x] On-chain re-execution of **all** step primitives (NTT, pointwise, UseHint) — no stub
 - [x] Off-chain generator emits the full 135-step sequence; cross-language parity test
+- [x] Foundry deployment script + live Base Sepolia deployment ([`DEPLOYMENTS.md`](DEPLOYMENTS.md))
 - [ ] **Step-linkage binding** for full optimistic L1 soundness (the real remaining work)
-- [ ] Foundry deployment scripts for Sepolia and mainnet
 - [ ] Gas optimization pass (assembly for inner loops, precomputed tables)
 - [ ] Support ML-DSA-44 and ML-DSA-87 parameter sets
 - [ ] Formal verification of critical arithmetic (NTT, modular reduction)
@@ -301,8 +312,7 @@ const hints = generateHints(publicKey, message, signature);
 |------|--------|------------|
 | Full verify > 30M gas limit | Cannot run on Ethereum L1 in a single tx | Use optimistic mode on L1; full mode works on L2 |
 | Optimistic step *linkage* not enforced | Steps are individually re-executable, but not yet chained/bound to inputs — so optimistic mode is PoC, not L1-sound | Use full verifier for production; linkage binding is the next milestone (SECURITY.md) |
-| No deployment scripts | Manual deploy only | Foundry scripts planned |
-| SHAKE is 80% of gas | Inherent to EVM lacking SHAKE opcode | Advocate for EVM SHAKE precompile |
+| SHAKE is 80% of gas | Inherent to EVM lacking SHAKE opcode | EVM SHAKE precompile, or full ML-DSA precompile ([EIP-8051](https://eips.ethereum.org/EIPS/eip-8051)) |
 | Challenge window latency | ~1 hour before signature accepted on L1 | Acceptable for L1; use full verifier on L2 for instant finality |
 | Unaudited | Not production-safe | Independent security review needed before mainnet |
 
@@ -313,13 +323,15 @@ This library implements cryptographic signature verification. Incorrect implemen
 **What we've done:**
 - Tested against NIST known-answer vectors for SHAKE-128/256
 - Cross-validated with quantumFDN's production test vector (JavaScript + Rust + Solidity)
-- NTT round-trip verification (forward + inverse = identity)
+- NTT round-trip + pointwise-correctness fuzzing (256 runs each) and graceful-failure fuzzing — see `test/Fuzz.t.sol`
+- Fraud-proof tests: corrupted steps are caught, honest steps cannot be challenged
 - Graceful failure: invalid inputs return `false`, never revert
+- Threat model documented in [`SECURITY.md`](SECURITY.md)
 
 **What's needed before production:**
-- Independent security audit
+- Independent security audit (the pure-Solidity Keccak/NTT/FIPS-204 arithmetic are the priority targets)
+- Step-linkage binding before the optimistic path is L1-sound
 - Formal verification of modular arithmetic
-- Extended fuzzing of edge cases (zero polynomials, max-weight hints, boundary coefficients)
 
 If you find a vulnerability, please report it responsibly by opening a private security advisory on this repository.
 
@@ -327,10 +339,10 @@ If you find a vulnerability, please report it responsibly by opening a private s
 
 Contributions welcome. The highest-impact areas right now:
 
-1. **Extend the hint generator** to cover NTT, pointwise multiply, and UseHint steps
+1. **Step-linkage binding** — make optimistic mode L1-sound by enforcing step wiring and binding to (pk, message, signature). See [`SECURITY.md`](SECURITY.md).
 2. **Gas optimization** — assembly for hot loops in NTT and Keccak
 3. **Additional parameter sets** — ML-DSA-44 (Level 2) and ML-DSA-87 (Level 5)
-4. **Fuzzing** — property-based testing with Foundry's fuzzer
+4. **EIP-8051 reference** — keep this implementation aligned as the pure-Solidity fallback/cross-check for the proposed ML-DSA precompile
 
 ```bash
 # Run tests
