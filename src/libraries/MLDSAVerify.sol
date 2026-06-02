@@ -262,7 +262,7 @@ library MLDSAVerify {
     }
 
     /// @dev Encode w1 vector: 4 bits per coefficient, K polynomials.
-    function encodeW1(uint256[256][6] memory w1) private pure returns (bytes memory) {
+    function encodeW1(uint256[256][6] memory w1) internal pure returns (bytes memory) {
         // K * 128 bytes = 768 bytes
         bytes memory result = new bytes(768);
         uint256 idx = 0;

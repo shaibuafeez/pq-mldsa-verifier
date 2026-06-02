@@ -2,7 +2,7 @@ import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { shake128, shake256 } from '@noble/hashes/sha3';
 import { buildMerkleTree, type MerkleTree } from './merkle';
-import { ntt, invNtt, pointwiseMul, pointwiseAdd, pointwiseSub, scale2d, useHint } from './poly';
+import { ntt, invNtt, pointwiseMul, pointwiseAdd, pointwiseSub, scale2d, useHint, encodeW1 } from './poly';
 
 const Q = 8380417;
 const K = 6;
@@ -26,6 +26,9 @@ export const OP = {
   SUB: 7,
   SCALE2D: 8,
   USEHINT: 9,
+  ENCODE_W1: 10,
+  SHAKE256_48: 11,
+  COMPARE_CTILDE: 12,
 } as const;
 
 /** A single step in the verification process. */
@@ -288,6 +291,7 @@ export function generateHints(
   const h = decodeHint(signature, 3248);
 
   // For each row: wApprox[i] = InvNTT( sum_j A_hat[i][j]*z_hat[j] - c_hat*t1_hat[i] )
+  const w1All: number[][] = [];
   for (let i = 0; i < K; i++) {
     let acc = new Array(256).fill(0);
     for (let j = 0; j < L; j++) {
@@ -308,7 +312,40 @@ export function generateHints(
 
     const w1 = wApprox.map((r, k) => useHint(h[i][k], r));
     pushBinary(OP.USEHINT, `UseHint(h[${i}], w_approx[${i}])`, h[i], wApprox, w1);
+    w1All.push(w1);
   }
+
+  // --- Final-result steps: encode w1, hash to c_tilde', compare ---
+  const w1Bytes = encodeW1(w1All);
+  steps.push({
+    index: stepIndex++,
+    opcode: OP.ENCODE_W1,
+    description: 'EncodeW1',
+    input: concat(...w1All.map(encodeCoeffs)),
+    output: w1Bytes,
+  });
+
+  const cTildePrimeInput = concat(mu, w1Bytes);
+  const cTildePrime = shake256(cTildePrimeInput, { dkLen: 48 });
+  steps.push({
+    index: stepIndex++,
+    opcode: OP.SHAKE256_48,
+    description: "c_tilde' = SHAKE-256(mu || w1Bytes, 48)",
+    input: cTildePrimeInput,
+    output: cTildePrime,
+  });
+
+  let ctEqual = 1;
+  for (let i = 0; i < 48; i++) {
+    if (cTildePrime[i] !== cTilde[i]) { ctEqual = 0; break; }
+  }
+  steps.push({
+    index: stepIndex++,
+    opcode: OP.COMPARE_CTILDE,
+    description: 'COMPARE c_tilde',
+    input: concat(cTildePrime, cTilde),
+    output: new Uint8Array([ctEqual]),
+  });
 
   // Build Merkle tree from all steps
   const leaves = steps.map((step) =>

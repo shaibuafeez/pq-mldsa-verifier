@@ -214,6 +214,30 @@ contract MLDSAOptimisticChallengeTest is Test {
         _expectCaught(OP_SAMPLEINBALL, cTilde);
     }
 
+    function test_Challenge_CatchesCorruptedEncodeW1() public {
+        bytes memory w1polys = new bytes(6 * 768); // 6 w1 polynomials
+        w1polys[5] = 0x0F;
+        _expectCaught(10, w1polys); // OP_ENCODE_W1
+    }
+
+    function test_Challenge_CatchesCorruptedShake256_48() public {
+        bytes memory input = new bytes(832); // mu(64) || w1Bytes(768)
+        input[0] = 0x11;
+        _expectCaught(11, input); // OP_SHAKE256_48
+    }
+
+    function test_Challenge_CatchesCorruptedCompareCtilde() public {
+        bytes memory input = new bytes(96); // c_tilde' || c_tilde (equal -> output 1)
+        bytes memory wrong = opt.exec(12, input); // correct output for equal halves = 0x01
+        wrong[0] = bytes1(uint8(wrong[0]) ^ 0x01); // flip accept->reject
+
+        (bytes32 id, bytes32[] memory proof) = _submitWithCorruptedStep(12, input, wrong);
+        vm.prank(challenger);
+        opt.challenge(id, uint32(0), 12, input, wrong, proof);
+        (,,,,, MLDSAOptimistic.VerificationStatus status) = opt.commitments(id);
+        assertEq(uint256(status), uint256(MLDSAOptimistic.VerificationStatus.Rejected), "compare must be caught");
+    }
+
     // ─── honest prover is NOT penalized ─────────────────
 
     function test_Challenge_HonestStepSurvives() public {

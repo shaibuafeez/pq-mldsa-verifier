@@ -100,6 +100,18 @@ function decompose(r: number): { r1: number; r0: number } {
   return { r1: (rPos - r0) / ALPHA, r0 };
 }
 
+/** encodeW1 — mirrors MLDSAVerify.encodeW1 (4 bits/coeff, K=6 polys -> 768 bytes). */
+export function encodeW1(w1: number[][]): Uint8Array {
+  const out = new Uint8Array(768);
+  let idx = 0;
+  for (let poly = 0; poly < 6; poly++) {
+    for (let j = 0; j < 256; j += 2) {
+      out[idx++] = (w1[poly][j] | (w1[poly][j + 1] << 4)) & 0xff;
+    }
+  }
+  return out;
+}
+
 /** useHint — mirrors MLDSAVerify.useHint. */
 export function useHint(hint: number, r: number): number {
   const { r1, r0 } = decompose(r);

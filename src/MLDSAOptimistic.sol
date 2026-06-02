@@ -40,6 +40,10 @@ contract MLDSAOptimistic is IMLDSAVerifier {
     uint8 internal constant OP_SUB = 7; // pointwise subtract (2 polys -> 1)
     uint8 internal constant OP_SCALE2D = 8; // multiply each coeff by 2^D mod Q (1 poly -> 1)
     uint8 internal constant OP_USEHINT = 9; // UseHint(hintPoly, wPoly) -> w1 poly
+    // Final-result steps (acceptance computation) — see docs/optimistic-trace.md §6
+    uint8 internal constant OP_ENCODE_W1 = 10; // pack 6 w1 polys (4 bits/coeff) -> 768 B
+    uint8 internal constant OP_SHAKE256_48 = 11; // c_tilde' = SHAKE-256(mu || w1Bytes, 48)
+    uint8 internal constant OP_COMPARE_CTILDE = 12; // c_tilde' == c_tilde -> 1 byte (0/1)
 
     /// @dev Canonical polynomial serialization: 256 coefficients, 3 bytes each
     ///      (big-endian). Coefficients are < Q < 2^23 so 3 bytes is exact.
@@ -341,6 +345,30 @@ contract MLDSAOptimistic is IMLDSAVerifier {
                 w1[i] = MLDSAVerify.useHint(hint[i], w[i]);
             }
             return _encodePoly(w1);
+        } else if (opcode == OP_ENCODE_W1) {
+            // input: 6 w1 polys (6 * 768 = 4608 B); output: packed w1Bytes (768 B)
+            require(stepInput.length == 6 * POLY_BYTES, "encodew1 input");
+            uint256[256][6] memory w1;
+            for (uint256 i = 0; i < 6; i++) {
+                w1[i] = _decodePoly(stepInput, i * POLY_BYTES);
+            }
+            return MLDSAVerify.encodeW1(w1);
+        } else if (opcode == OP_SHAKE256_48) {
+            // c_tilde' = SHAKE-256(mu || w1Bytes, 48)
+            return Keccak.shake256(stepInput, 48);
+        } else if (opcode == OP_COMPARE_CTILDE) {
+            // input: c_tilde'(48) || c_tilde(48); output: 1 byte (1 == accept)
+            require(stepInput.length == 96, "compare input");
+            bool eq = true;
+            for (uint256 i = 0; i < 48; i++) {
+                if (stepInput[i] != stepInput[48 + i]) {
+                    eq = false;
+                    break;
+                }
+            }
+            bytes memory out = new bytes(1);
+            out[0] = eq ? bytes1(0x01) : bytes1(0x00);
+            return out;
         }
         revert("unknown opcode");
     }

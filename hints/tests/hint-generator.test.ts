@@ -18,15 +18,21 @@ describe('generateHints', () => {
     expect(hints.steps.length).toBeGreaterThan(30);
   });
 
-  it('has full step coverage (33 hash/sampling + 102 polynomial primitives = 135)', () => {
-    // 30 ExpandA + tr + mu + SampleInBall = 33
-    // + NTT(c) = 1
-    // + NTT(z[j]) x5 = 5
-    // + (SCALE2D + NTT)(t1[i]) x6 = 12
-    // + per row x6: 5 MUL + 5 ADD + 1 MUL + 1 SUB + 1 INTT + 1 USEHINT = 14 -> 84
-    // total = 135
+  it('has full step coverage (135 verification + 3 final-result = 138)', () => {
+    // 33 hash/sampling + 102 polynomial = 135, plus ENCODE_W1 + SHAKE256_48 +
+    // COMPARE_CTILDE = 138.
     const hints = generateHints(publicKey, message, signature);
-    expect(hints.steps.length).toBe(135);
+    expect(hints.steps.length).toBe(138);
+  });
+
+  it('final COMPARE_CTILDE step accepts a valid signature', () => {
+    // End-to-end: the full TS verification pipeline (NTT/pointwise/useHint/
+    // encodeW1/SHAKE) reproduces ML-DSA-65 verification and the last step
+    // outputs 1 (accept) for a valid signature.
+    const hints = generateHints(publicKey, message, signature);
+    const last = hints.steps[hints.steps.length - 1];
+    expect(last.opcode).toBe(12); // COMPARE_CTILDE
+    expect(last.output[0]).toBe(1);
   });
 
   it('polynomial primitive steps are present (no stub gap)', () => {

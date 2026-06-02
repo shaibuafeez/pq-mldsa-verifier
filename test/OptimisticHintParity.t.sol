@@ -42,7 +42,7 @@ contract OptimisticHintParityTest is Test {
         assertEq(outputs.length, count, "outputs len");
         // Full coverage: every emitted step (ExpandA, SHAKE-256, SampleInBall,
         // and all polynomial primitives), not just opcode>=3.
-        assertGt(count, 130, "expected the full step set (all opcodes)");
+        assertGt(count, 135, "expected the full step set incl. final-result opcodes");
 
         for (uint256 i = 0; i < count; i++) {
             bytes memory got = opt.exec(uint8(opcodes[i]), inputs[i]);
