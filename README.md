@@ -10,8 +10,6 @@
 
 Prepare your smart contracts for the post-quantum era — no precompiles, no WASM, no chain lock-in. Just Solidity.
 
-> **Warning**: This is experimental cryptographic software. It has not been audited. Do not use in production without independent security review.
-
 > **Live on Base Sepolia:** the full verifier is deployed at
 > [`0xe42C6eF5b71834930faC33780bE730F7112a3a6B`](https://sepolia.basescan.org/address/0xe42C6eF5b71834930faC33780bE730F7112a3a6B)
 > and verifies a real ML-DSA-65 signature on-chain (returns `true` for the
