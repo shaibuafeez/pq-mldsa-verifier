@@ -185,6 +185,11 @@ contract MLDSAOptimisticTest is Test {
         assertFalse(optimistic.verify(pk, message, sig));
     }
 
+    function test_verifyReturnsFalseForBadLength() public view {
+        assertFalse(optimistic.verify(new bytes(100), message, sig), "bad pk length");
+        assertFalse(optimistic.verify(pk, message, new bytes(100)), "bad sig length");
+    }
+
     function test_verifyReturnsFalseForWrongMessage() public {
         bytes32 merkleRoot = keccak256("fake-merkle-root");
 

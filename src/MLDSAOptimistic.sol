@@ -293,6 +293,8 @@ contract MLDSAOptimistic is IMLDSAVerifier {
     /// @dev Returns true only if a finalized (unchallenged) commitment exists
     ///      for this exact (publicKey, message, signature) tuple.
     function verify(bytes calldata publicKey, bytes32 message, bytes calldata signature) external view returns (bool) {
+        if (publicKey.length != MLDSAParams.PK_SIZE) return false;
+        if (signature.length != MLDSAParams.SIG_SIZE) return false;
         bytes32 sigHash = keccak256(abi.encodePacked(publicKey, message, signature));
         bytes32 commitmentId = accepted[sigHash];
         if (commitmentId == bytes32(0)) return false;

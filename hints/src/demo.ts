@@ -126,7 +126,7 @@ console.log();
 console.log('  Mode                       Gas Cost       Where');
 console.log('  ────────────────────────    ──────────     ─────────────────────');
 console.log('  Full verification          ~163M gas      MLDSAVerifier.sol');
-console.log('  Optimistic submit          ~200K gas      MLDSAOptimistic.sol');
+console.log('  Optimistic submit          ~295K gas      MLDSAOptimistic.sol');
 console.log('  Challenge (single step)    ~100-500K gas  MLDSAOptimistic.sol');
 console.log('  Finalize (no challenge)    ~50K gas       MLDSAOptimistic.sol');
 console.log();
@@ -141,7 +141,7 @@ console.log('  ─────────────────────�
 console.log('  Tetration dilithium-sol    >30M gas   ML-DSA-44 only, broken');
 console.log('  quantumFDN Stylus          374K gas   Arbitrum only (Rust/WASM)');
 console.log('  This (full)                163M gas   Any EVM chain');
-console.log('  This (optimistic)          200K gas   Any EVM chain');
+console.log('  This (optimistic)          295K gas   Any EVM chain (PoC)');
 console.log();
 
 // Output data that would be sent on-chain
@@ -155,5 +155,5 @@ console.log(`  message:    0x${bytesToHex(message)}`);
 console.log(`  signature:  0x${bytesToHex(signature).slice(0, 64)}...`);
 console.log();
 console.log('  To submit on-chain, call:');
-console.log('  optimistic.submitVerification(publicKey, message, signature, merkleRoot)');
+console.log('  optimistic.submitVerification(publicKey, message, signature, merkleRoot, true)');
 console.log();

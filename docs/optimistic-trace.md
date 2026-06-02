@@ -56,7 +56,7 @@ TraceHeader {
   bytes32  message;        // 32-byte message
   bytes32  signatureHash;  // keccak256(signature)
   uint32   stepCount;      // exact expected trace length for this paramSet
-  bool     claimedResult;  // must be true to be finalizable
+  bool     claimedResult;  // a false-claim still finalizes, but never makes verify() true
 }
 
 headerHash = keccak256(abi.encode(TRACE_HEADER_DOMAIN, header))

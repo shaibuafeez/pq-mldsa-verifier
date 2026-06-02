@@ -3,7 +3,7 @@
 ![Solidity](https://img.shields.io/badge/Solidity-%3E%3D0.8.21-363636?logo=solidity)
 ![FIPS 204](https://img.shields.io/badge/FIPS_204-ML--DSA--65-2563eb)
 ![Post-Quantum](https://img.shields.io/badge/post--quantum-NIST_Level_3-16a34a)
-![Tests](https://img.shields.io/badge/tests-71_passing-16a34a)
+![Tests](https://img.shields.io/badge/tests-72_passing-16a34a)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
 **Pure-Solidity on-chain verification of ML-DSA-65 (FIPS 204) post-quantum digital signatures.**
@@ -41,7 +41,7 @@ bool valid = verifier.verify(publicKey, messageHash, signature);
 | Mode | Contract | Gas | Runs On |
 |------|----------|-----|---------|
 | **Full verification** | `MLDSAVerifier.sol` | ~163M | L2s with high gas limits, off-chain, testing. **Production-ready, fully tested.** |
-| **Optimistic verification** | `MLDSAOptimistic.sol` | ~200K submit | Cheaper path for L1. **PoC** — every step is now re-executable on-chain and challengeable (see below), but full L1 soundness still needs step-*linkage* binding. Not production-ready. |
+| **Optimistic verification** | `MLDSAOptimistic.sol` | ~295K submit | Cheaper path for L1. **PoC** — every step is now re-executable on-chain and challengeable (see below), but full L1 soundness still needs step-*linkage* binding. Not production-ready. |
 
 Both implement quantumFDN's exact [`IMLDSAVerifier`](src/interfaces/IMLDSAVerifier.sol) interface. Their `PQValidatorModule.sol` calls our contract with zero code changes — swap the address, done.
 
@@ -54,7 +54,7 @@ This is **proven, not asserted**: [`test/integration/PQWalletIntegration.t.sol`]
 git clone https://github.com/shaibuafeez/pq-mldsa-verifier.git
 cd pq-mldsa-verifier
 
-# Build & test (58 Solidity + 13 TS tests: unit, fraud proofs, TS⟷Solidity parity, real wallet integration)
+# Build & test (59 Solidity + 13 TS tests: unit, fraud proofs, TS⟷Solidity parity, real wallet integration)
 forge build && forge test -vv
 
 # Run the end-to-end demo (keygen → sign → hints → Merkle proofs)
@@ -80,7 +80,7 @@ contract MyWallet {
 | Operation | Gas | Equivalent To |
 |-----------|-----|---------------|
 | Full ML-DSA-65 verification | **162,917,043** | ~54,000 `ecrecover()` calls |
-| Optimistic submit (bond + commitment) | **~200,000** | ~67 `ecrecover()` calls |
+| Optimistic submit (bond + commitment) | **~295,000** (measured) | ~98 `ecrecover()` calls |
 | Challenge one step | **100,000 - 500,000** | Single SHAKE re-execution |
 | Finalize (no challenge) | **~50,000** | Cheaper than a Uniswap swap |
 
@@ -90,8 +90,8 @@ contract MyWallet {
 |---------|-----|-----------|--------|--------|
 | Tetration `dilithium-solidity` | >30M | ML-DSA-44 only | EVM | Broken SHAKE, abandoned since 2023 |
 | quantumFDN Stylus verifier | 374K | ML-DSA-65 | Arbitrum only | Production |
-| **This (full)** | **163M** | **ML-DSA-65** | **Any EVM** | 71 tests, cross-validated, live on Base Sepolia |
-| **This (optimistic)** | **~200K submit** | **ML-DSA-65** | **Any EVM** | PoC — per-step re-execution proven; linkage pending |
+| **This (full)** | **163M** | **ML-DSA-65** | **Any EVM** | 72 tests, cross-validated, live on Base Sepolia |
+| **This (optimistic)** | **~295K submit** | **ML-DSA-65** | **Any EVM** | PoC — per-step re-execution proven; linkage pending |
 
 ## Architecture
 
@@ -145,7 +145,7 @@ Full ML-DSA-65 verification has 33+ discrete steps (matrix expansion, hashing, p
 ```
 SUBMIT      Prover runs full verification off-chain.
             Commits Merkle root of all intermediate step results.
-            Posts ETH bond.                                          ~200K gas
+            Posts ETH bond.                                          ~295K gas
 
 CHALLENGE   Anyone can dispute ONE step during the challenge window.
             Provides: step index + opcode + input + output + Merkle proof.
@@ -185,13 +185,13 @@ verification. This is the documented next milestone — see
 ## Test Results
 
 ```
-71 tests across 7 suites — 0 failures
+72 tests across 7 suites — 0 failures
 
 ┌──────────────────────────────┬────────┬────────┬─────────┐
 │ Test Suite                   │ Passed │ Failed │ Skipped │
 ├──────────────────────────────┼────────┼────────┼─────────┤
 │ MLDSAVerifierTest            │ 18     │ 0      │ 0       │
-│ MLDSAOptimisticTest          │ 15     │ 0      │ 0       │
+│ MLDSAOptimisticTest          │ 16     │ 0      │ 0       │
 │ MLDSAOptimisticChallengeTest │ 13     │ 0      │ 0       │  ← fraud proofs
 │ OptimisticHintParityTest     │ 1      │ 0      │ 0       │  ← TS⟷Solidity parity (all 138 steps)
 │ PQWalletIntegrationTest      │ 6      │ 0      │ 0       │  ← real wallet module, no mocks
