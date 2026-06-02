@@ -26,15 +26,19 @@ const message = parseHex('9e4f18281574b474df452cbac5b93cba6a36544a4b4f7c385ac3a9
 
 const hints = generateHints(pk, message, sig);
 
-// Polynomial steps only (opcode >= 3); the hashing steps already have coverage.
-const poly = hints.steps.filter((s) => s.opcode >= 3);
+// ALL steps — every opcode the generator emits (ExpandA, SHAKE-256, SampleInBall,
+// and the 102 polynomial primitives). Re-executing each one on-chain and checking
+// byte-for-byte agreement is what guarantees the off-chain commitment and the
+// on-chain fraud-proof re-execution agree. (Filtering to opcode>=3 previously
+// hid a SampleInBall encoding mismatch — never again.)
+const all = hints.steps;
 
 const fixture = {
-  count: poly.length,
-  opcodes: poly.map((s) => s.opcode),
-  inputs: poly.map((s) => toHex(s.input)),
-  outputs: poly.map((s) => toHex(s.output)),
+  count: all.length,
+  opcodes: all.map((s) => s.opcode),
+  inputs: all.map((s) => toHex(s.input)),
+  outputs: all.map((s) => toHex(s.output)),
 };
 
 writeFileSync('../test/vectors/optimistic-steps.json', JSON.stringify(fixture));
-console.log(`wrote ${poly.length} polynomial steps to test/vectors/optimistic-steps.json`);
+console.log(`wrote ${all.length} steps (all opcodes) to test/vectors/optimistic-steps.json`);

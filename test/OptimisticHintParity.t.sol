@@ -13,10 +13,11 @@ contract OptHarness is MLDSAOptimistic {
 }
 
 /// @title OptimisticHintParity
-/// @notice Cross-language parity: re-executes every polynomial step emitted by
-///         the TypeScript hint generator (test/vectors/optimistic-steps.json,
-///         produced from the repo's real ML-DSA-65 vector) and asserts the
-///         on-chain executeStep() reproduces each output byte-for-byte.
+/// @notice Cross-language parity: re-executes every generated verification step
+///         emitted by the TypeScript hint generator (test/vectors/optimistic-steps.json,
+///         produced from the repo's real ML-DSA-65 vector) — all opcodes:
+///         ExpandA, SHAKE-256, SampleInBall, and the polynomial primitives — and
+///         asserts the on-chain executeStep() reproduces each output byte-for-byte.
 ///
 ///         This is the guarantee that the off-chain generator and the on-chain
 ///         fraud-proof re-execution agree — so an honest prover's commitment is
@@ -28,7 +29,7 @@ contract OptimisticHintParityTest is Test {
         opt = new OptHarness();
     }
 
-    function test_AllPolynomialSteps_MatchOnChain() public view {
+    function test_AllSteps_MatchOnChain() public view {
         string memory json = vm.readFile("test/vectors/optimistic-steps.json");
 
         uint256 count = vm.parseJsonUint(json, ".count");
@@ -39,7 +40,9 @@ contract OptimisticHintParityTest is Test {
         assertEq(opcodes.length, count, "opcodes len");
         assertEq(inputs.length, count, "inputs len");
         assertEq(outputs.length, count, "outputs len");
-        assertGt(count, 90, "expected the full polynomial step set");
+        // Full coverage: every emitted step (ExpandA, SHAKE-256, SampleInBall,
+        // and all polynomial primitives), not just opcode>=3.
+        assertGt(count, 130, "expected the full step set (all opcodes)");
 
         for (uint256 i = 0; i < count; i++) {
             bytes memory got = opt.exec(uint8(opcodes[i]), inputs[i]);

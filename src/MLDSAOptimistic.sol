@@ -376,7 +376,6 @@ contract MLDSAOptimistic is IMLDSAVerifier {
 
     function _stepSampleInBall(bytes calldata input) private pure returns (bytes memory) {
         bytes memory stream = Keccak.shake256(input, 256);
-        bytes memory result = new bytes(256); // 256 coefficients as bytes
 
         uint64 signs = 0;
         for (uint256 i = 0; i < 8; i++) {
@@ -398,11 +397,12 @@ contract MLDSAOptimistic is IMLDSAVerifier {
             signs >>= 1;
         }
 
-        // Encode coefficients
-        for (uint256 i = 0; i < 256; i++) {
-            result[i] = bytes1(uint8(c[i] & 0xFF));
-        }
-        return result;
+        // Canonical encoding: 3 bytes per coefficient, big-endian — identical to
+        // every other polynomial step and to the off-chain generator's
+        // encodeCoeffs(). (Was previously 1 byte/coeff, which both truncated
+        // Q-1 and produced a 256-byte output that never matched the committed
+        // 768-byte step; covered now by the all-steps parity test.)
+        return _encodePoly(c);
     }
 
 }
