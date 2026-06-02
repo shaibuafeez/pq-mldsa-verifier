@@ -28,14 +28,10 @@ interface IModule {
 }
 
 interface IValidator is IModule {
-    function validateUserOp(
-        PackedUserOperation calldata userOp,
-        bytes32 userOpHash
-    ) external returns (uint256);
+    function validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external returns (uint256);
 
-    function isValidSignatureWithSender(
-        address sender,
-        bytes32 hash,
-        bytes calldata data
-    ) external view returns (bytes4);
+    function isValidSignatureWithSender(address sender, bytes32 hash, bytes calldata data)
+        external
+        view
+        returns (bytes4);
 }

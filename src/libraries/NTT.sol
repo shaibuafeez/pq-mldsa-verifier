@@ -61,30 +61,21 @@ library NTT {
     }
 
     /// @notice Pointwise multiplication of two polynomials in NTT domain.
-    function pointwiseMul(
-        uint256[256] memory a,
-        uint256[256] memory b
-    ) internal pure returns (uint256[256] memory c) {
+    function pointwiseMul(uint256[256] memory a, uint256[256] memory b) internal pure returns (uint256[256] memory c) {
         for (uint256 i = 0; i < 256; i++) {
             c[i] = mulmod(a[i], b[i], Q);
         }
     }
 
     /// @notice Pointwise addition of two polynomials.
-    function pointwiseAdd(
-        uint256[256] memory a,
-        uint256[256] memory b
-    ) internal pure returns (uint256[256] memory c) {
+    function pointwiseAdd(uint256[256] memory a, uint256[256] memory b) internal pure returns (uint256[256] memory c) {
         for (uint256 i = 0; i < 256; i++) {
             c[i] = addmod(a[i], b[i], Q);
         }
     }
 
     /// @notice Pointwise subtraction: a - b mod Q.
-    function pointwiseSub(
-        uint256[256] memory a,
-        uint256[256] memory b
-    ) internal pure returns (uint256[256] memory c) {
+    function pointwiseSub(uint256[256] memory a, uint256[256] memory b) internal pure returns (uint256[256] memory c) {
         for (uint256 i = 0; i < 256; i++) {
             c[i] = addmod(a[i], Q - b[i], Q);
         }

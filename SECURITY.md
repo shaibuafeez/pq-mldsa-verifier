@@ -47,10 +47,12 @@ of the public key stored by the consuming wallet.
 
 `MLDSAOptimistic` re-executes **every** primitive step on-chain (ExpandA,
 SHAKE-256, SampleInBall, NTT, InvNTT, pointwise mul/add/sub, scale-by-2^d,
-UseHint). A challenger can dispute any single step and the contract recomputes
-that exact primitive; a mismatch slashes the prover. This is proven in
-`test/MLDSAOptimisticChallenge.t.sol`, and on-chain/off-chain agreement on all
-102 polynomial steps is proven in `test/OptimisticHintParity.t.sol`.
+UseHint, and the final-result steps EncodeW1 / SHAKE256-48 / CompareCtilde). A
+challenger can dispute any single step and the contract recomputes that exact
+primitive; a mismatch slashes the prover. This is proven in
+`test/MLDSAOptimisticChallenge.t.sol`, and on-chain/off-chain agreement on **all
+138 steps** (every opcode, through the acceptance comparison) is proven in
+`test/OptimisticHintParity.t.sol`.
 
 **What is still missing for full L1 soundness:** the challenge protocol verifies
 each step *in isolation*. It does **not** yet enforce *linkage* —

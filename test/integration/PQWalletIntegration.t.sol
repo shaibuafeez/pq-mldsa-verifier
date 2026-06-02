@@ -25,8 +25,7 @@ import {VALIDATION_SUCCESS, VALIDATION_FAILED, MODULE_TYPE_VALIDATOR} from "erc7
 ///         message and signature bytes.
 contract PQWalletIntegrationTest is Test {
     // Message from pq-smart-wallet/test-vectors/js-noble-vectors.json
-    bytes32 internal constant NOBLE_MESSAGE =
-        0x9e4f18281574b474df452cbac5b93cba6a36544a4b4f7c385ac3a928c66a4c84;
+    bytes32 internal constant NOBLE_MESSAGE = 0x9e4f18281574b474df452cbac5b93cba6a36544a4b4f7c385ac3a928c66a4c84;
 
     address internal constant SMART_ACCOUNT = address(0xA11CE);
 
@@ -54,11 +53,7 @@ contract PQWalletIntegrationTest is Test {
         assertTrue(module.isInitialized(SMART_ACCOUNT), "account not initialized");
     }
 
-    function _userOp(bytes memory signature)
-        internal
-        pure
-        returns (PackedUserOperation memory op)
-    {
+    function _userOp(bytes memory signature) internal pure returns (PackedUserOperation memory op) {
         op.sender = SMART_ACCOUNT;
         op.signature = signature;
     }

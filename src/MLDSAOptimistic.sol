@@ -54,18 +54,18 @@ contract MLDSAOptimistic is IMLDSAVerifier {
 
     enum VerificationStatus {
         None,
-        Pending,     // Commitment submitted, in challenge window
-        Verified,    // Challenge window passed, signature accepted
-        Challenged,  // Challenge submitted, awaiting resolution
-        Rejected     // Challenge succeeded, signature invalid
+        Pending, // Commitment submitted, in challenge window
+        Verified, // Challenge window passed, signature accepted
+        Challenged, // Challenge submitted, awaiting resolution
+        Rejected // Challenge succeeded, signature invalid
     }
 
     struct Commitment {
         address submitter;
-        bytes32 merkleRoot;      // Root of Merkle tree over all intermediate steps
-        bytes32 signatureHash;   // keccak256(publicKey || message || signature)
-        uint256 submitBlock;     // Block number when submitted
-        uint256 bond;            // ETH bond (slashed if challenge succeeds)
+        bytes32 merkleRoot; // Root of Merkle tree over all intermediate steps
+        bytes32 signatureHash; // keccak256(publicKey || message || signature)
+        uint256 submitBlock; // Block number when submitted
+        uint256 bond; // ETH bond (slashed if challenge succeeds)
         VerificationStatus status;
     }
 
@@ -86,25 +86,14 @@ contract MLDSAOptimistic is IMLDSAVerifier {
     // ─── Events ─────────────────────────────────────────
 
     event VerificationSubmitted(
-        bytes32 indexed commitmentId,
-        bytes32 indexed signatureHash,
-        bytes32 merkleRoot,
-        address submitter
+        bytes32 indexed commitmentId, bytes32 indexed signatureHash, bytes32 merkleRoot, address submitter
     );
 
-    event VerificationChallenged(
-        bytes32 indexed commitmentId,
-        address challenger,
-        uint256 stepIndex
-    );
+    event VerificationChallenged(bytes32 indexed commitmentId, address challenger, uint256 stepIndex);
 
     event VerificationFinalized(bytes32 indexed commitmentId);
 
-    event VerificationRejected(
-        bytes32 indexed commitmentId,
-        address challenger,
-        uint256 reward
-    );
+    event VerificationRejected(bytes32 indexed commitmentId, address challenger, uint256 reward);
 
     // ─── Errors ─────────────────────────────────────────
 
@@ -137,12 +126,10 @@ contract MLDSAOptimistic is IMLDSAVerifier {
     /// @param merkleRoot Merkle root of all intermediate verification steps.
     /// @dev The submitter must provide a bond. If the commitment is not
     ///      challenged within the window, call finalize() to accept it.
-    function submitVerification(
-        bytes calldata publicKey,
-        bytes32 message,
-        bytes calldata signature,
-        bytes32 merkleRoot
-    ) external payable {
+    function submitVerification(bytes calldata publicKey, bytes32 message, bytes calldata signature, bytes32 merkleRoot)
+        external
+        payable
+    {
         if (msg.value < minBond) revert InsufficientBond();
         // Cheap sanity checks (reviewer #6/#7). These do not make the optimistic
         // path sound on their own — trace linkage is still required (see
@@ -255,11 +242,7 @@ contract MLDSAOptimistic is IMLDSAVerifier {
     /// @inheritdoc IMLDSAVerifier
     /// @dev Returns true only if a finalized (unchallenged) commitment exists
     ///      for this exact (publicKey, message, signature) tuple.
-    function verify(
-        bytes calldata publicKey,
-        bytes32 message,
-        bytes calldata signature
-    ) external view returns (bool) {
+    function verify(bytes calldata publicKey, bytes32 message, bytes calldata signature) external view returns (bool) {
         bytes32 sigHash = keccak256(abi.encodePacked(publicKey, message, signature));
         bytes32 commitmentId = accepted[sigHash];
         if (commitmentId == bytes32(0)) return false;
@@ -269,11 +252,7 @@ contract MLDSAOptimistic is IMLDSAVerifier {
     // ─── Internal helpers ───────────────────────────────
 
     /// @dev Verify a Merkle proof.
-    function verifyMerkleProof(
-        bytes32[] calldata proof,
-        bytes32 root,
-        bytes32 leaf
-    ) internal pure returns (bool) {
+    function verifyMerkleProof(bytes32[] calldata proof, bytes32 root, bytes32 leaf) internal pure returns (bool) {
         bytes32 hash = leaf;
         for (uint256 i = 0; i < proof.length; i++) {
             if (hash <= proof[i]) {
@@ -401,9 +380,10 @@ contract MLDSAOptimistic is IMLDSAVerifier {
         uint256 count = 0;
         uint256 pos = 0;
         while (count < 256 && pos + 2 < stream.length) {
-            uint256 sample = (uint256(uint8(stream[pos]))
-                | (uint256(uint8(stream[pos + 1])) << 8)
-                | (uint256(uint8(stream[pos + 2])) << 16)) & 0x7FFFFF;
+            uint256 sample =
+                (uint256(uint8(stream[pos]))
+                        | (uint256(uint8(stream[pos + 1])) << 8)
+                        | (uint256(uint8(stream[pos + 2])) << 16)) & 0x7FFFFF;
             pos += 3;
             if (sample < MLDSAParams.Q) {
                 result[count * 3] = bytes1(uint8(sample >> 16));
@@ -445,5 +425,4 @@ contract MLDSAOptimistic is IMLDSAVerifier {
         // 768-byte step; covered now by the all-steps parity test.)
         return _encodePoly(c);
     }
-
 }

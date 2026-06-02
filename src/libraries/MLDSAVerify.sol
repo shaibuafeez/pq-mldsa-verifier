@@ -17,11 +17,7 @@ library MLDSAVerify {
     /// @param message The 32-byte message hash.
     /// @param sig The 3309-byte signature.
     /// @return True if the signature is valid.
-    function verify(
-        bytes calldata pk,
-        bytes32 message,
-        bytes calldata sig
-    ) internal pure returns (bool) {
+    function verify(bytes calldata pk, bytes32 message, bytes calldata sig) internal pure returns (bool) {
         // Step 1: Decode public key
         (bytes32 rho, uint256[256][6] memory t1) = MLDSADecode.decodePk(pk);
 
@@ -250,10 +246,11 @@ library MLDSAVerify {
     }
 
     /// @dev Apply UseHint to entire vector of K polynomials.
-    function useHintVector(
-        uint256[256][6] memory h,
-        uint256[256][6] memory w
-    ) private pure returns (uint256[256][6] memory w1) {
+    function useHintVector(uint256[256][6] memory h, uint256[256][6] memory w)
+        private
+        pure
+        returns (uint256[256][6] memory w1)
+    {
         for (uint256 i = 0; i < 6; i++) {
             for (uint256 j = 0; j < 256; j++) {
                 w1[i][j] = useHint(h[i][j], w[i][j]);

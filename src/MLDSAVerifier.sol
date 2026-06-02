@@ -19,11 +19,7 @@ import {MLDSAParams} from "./libraries/MLDSAParams.sol";
 ///      - Any EVM chain (Ethereum, Polygon, Base, Optimism, Arbitrum, etc.)
 contract MLDSAVerifier is IMLDSAVerifier {
     /// @inheritdoc IMLDSAVerifier
-    function verify(
-        bytes calldata publicKey,
-        bytes32 message,
-        bytes calldata signature
-    ) external pure returns (bool) {
+    function verify(bytes calldata publicKey, bytes32 message, bytes calldata signature) external pure returns (bool) {
         // Input size validation (fail gracefully, no revert)
         if (publicKey.length != MLDSAParams.PK_SIZE) return false;
         if (signature.length != MLDSAParams.SIG_SIZE) return false;

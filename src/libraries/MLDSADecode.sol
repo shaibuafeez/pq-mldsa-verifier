@@ -11,9 +11,7 @@ library MLDSADecode {
     /// @param pk The 1952-byte public key.
     /// @return rho 32-byte seed for matrix A.
     /// @return t1 K=6 polynomials, each 256 coefficients in [0, 1023] (10 bits each).
-    function decodePk(
-        bytes calldata pk
-    ) internal pure returns (bytes32 rho, uint256[256][6] memory t1) {
+    function decodePk(bytes calldata pk) internal pure returns (bytes32 rho, uint256[256][6] memory t1) {
         require(pk.length == MLDSAParams.PK_SIZE, "Invalid pk length");
 
         // First 32 bytes are rho
@@ -32,17 +30,10 @@ library MLDSADecode {
     /// @return z L=5 polynomials with coefficients in [-(gamma1-1), gamma1].
     /// @return h K=6 hint polynomials with coefficients in {0, 1}.
     /// @return valid True if hint encoding is well-formed.
-    function decodeSig(
-        bytes calldata sig
-    )
+    function decodeSig(bytes calldata sig)
         internal
         pure
-        returns (
-            bytes memory cTilde,
-            int256[256][5] memory z,
-            uint256[256][6] memory h,
-            bool valid
-        )
+        returns (bytes memory cTilde, int256[256][5] memory z, uint256[256][6] memory h, bool valid)
     {
         require(sig.length == MLDSAParams.SIG_SIZE, "Invalid sig length");
 
@@ -65,9 +56,7 @@ library MLDSADecode {
 
     /// @notice Unpack a polynomial with 10 bits per coefficient (for t1).
     /// @dev Little-endian bit packing. Output coefficients in [0, 1023].
-    function unpackPoly10(
-        bytes calldata data
-    ) internal pure returns (uint256[256] memory coeffs) {
+    function unpackPoly10(bytes calldata data) internal pure returns (uint256[256] memory coeffs) {
         // 256 coefficients * 10 bits = 2560 bits = 320 bytes
         // Process 4 coefficients from 5 bytes at a time (40 bits = 4 * 10)
         for (uint256 i = 0; i < 64; i++) {
@@ -88,9 +77,7 @@ library MLDSADecode {
 
     /// @notice Unpack a z polynomial with 20 bits per coefficient.
     /// @dev Encoded as gamma1 - z_coeff. Output: signed coefficients in [-(gamma1-1), gamma1].
-    function unpackPolyZ(
-        bytes calldata data
-    ) internal pure returns (int256[256] memory coeffs) {
+    function unpackPolyZ(bytes calldata data) internal pure returns (int256[256] memory coeffs) {
         // 256 coefficients * 20 bits = 5120 bits = 640 bytes
         // Process 2 coefficients from 5 bytes at a time (40 bits = 2 * 20)
         for (uint256 i = 0; i < 128; i++) {
@@ -113,9 +100,7 @@ library MLDSADecode {
 
     /// @notice Unpack hint encoding (61 bytes = omega + K).
     /// @dev Returns K=6 polynomials with {0,1} coefficients and validity flag.
-    function unpackHint(
-        bytes calldata data
-    ) internal pure returns (uint256[256][6] memory h, bool valid) {
+    function unpackHint(bytes calldata data) internal pure returns (uint256[256][6] memory h, bool valid) {
         valid = true;
         uint256 prevOffset = 0;
 

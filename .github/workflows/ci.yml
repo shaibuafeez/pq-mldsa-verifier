@@ -20,6 +20,9 @@ jobs:
       - name: Show versions
         run: forge --version
 
+      - name: Format check
+        run: forge fmt --check
+
       - name: Build
         run: forge build --sizes
 

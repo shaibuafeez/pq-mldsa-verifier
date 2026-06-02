@@ -30,8 +30,9 @@ contract PQValidatorModule is IValidator {
 
     function onInstall(bytes calldata data) external {
         if (isInitialized(msg.sender)) revert AlreadyInitialized(msg.sender);
-        if (data.length != 1952)
+        if (data.length != 1952) {
             revert InvalidMLDSAPublicKeyLength(data.length, 1952);
+        }
         publicKeys[msg.sender] = data;
     }
 
@@ -48,10 +49,7 @@ contract PQValidatorModule is IValidator {
         return moduleTypeId == MODULE_TYPE_VALIDATOR;
     }
 
-    function validateUserOp(
-        PackedUserOperation calldata userOp,
-        bytes32 userOpHash
-    ) external view returns (uint256) {
+    function validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external view returns (uint256) {
         if (!isInitialized(msg.sender)) return VALIDATION_FAILED;
         bytes memory mlDSAPubKey = publicKeys[msg.sender];
         bytes calldata userSig = userOp.signature;
@@ -61,16 +59,14 @@ contract PQValidatorModule is IValidator {
 
     // Bind sender-aware ERC-1271 checks to module/account/chain context so the
     // same signature cannot be replayed across different callers/protocols.
-    function isValidSignatureWithSender(
-        address sender,
-        bytes32 hash,
-        bytes calldata signature
-    ) external view returns (bytes4) {
+    function isValidSignatureWithSender(address sender, bytes32 hash, bytes calldata signature)
+        external
+        view
+        returns (bytes4)
+    {
         if (!isInitialized(msg.sender)) return ERC1271_INVALID;
         bytes memory mlDSAPubKey = publicKeys[msg.sender];
-        bytes32 senderBoundHash = keccak256(
-            abi.encodePacked(address(this), block.chainid, msg.sender, sender, hash)
-        );
+        bytes32 senderBoundHash = keccak256(abi.encodePacked(address(this), block.chainid, msg.sender, sender, hash));
         bool isVerified = verifier.verify(mlDSAPubKey, senderBoundHash, signature);
         return isVerified ? ERC1271_VALID : ERC1271_INVALID;
     }

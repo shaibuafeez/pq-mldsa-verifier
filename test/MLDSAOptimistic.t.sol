@@ -49,6 +49,44 @@ contract MLDSAOptimisticTest is Test {
         optimistic.submitVerification{value: MIN_BOND - 1}(pk, message, sig, merkleRoot);
     }
 
+    // ─── Submit input-validation guards ─────────────────
+
+    function test_submitRevertsBadPublicKeyLength() public {
+        bytes memory badPk = new bytes(100);
+        vm.prank(submitter);
+        vm.expectRevert(abi.encodeWithSelector(MLDSAOptimistic.InvalidPublicKeyLength.selector, uint256(100)));
+        optimistic.submitVerification{value: MIN_BOND}(badPk, message, sig, keccak256("r"));
+    }
+
+    function test_submitRevertsBadSignatureLength() public {
+        bytes memory badSig = new bytes(100);
+        vm.prank(submitter);
+        vm.expectRevert(abi.encodeWithSelector(MLDSAOptimistic.InvalidSignatureLength.selector, uint256(100)));
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, badSig, keccak256("r"));
+    }
+
+    function test_submitRevertsZeroMerkleRoot() public {
+        vm.prank(submitter);
+        vm.expectRevert(MLDSAOptimistic.ZeroMerkleRoot.selector);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, bytes32(0));
+    }
+
+    function test_submitRevertsAlreadyVerified() public {
+        bytes32 merkleRoot = keccak256("fake-merkle-root");
+        vm.prank(submitter);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
+
+        bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
+        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
+        vm.roll(block.number + CHALLENGE_WINDOW + 1);
+        optimistic.finalize(commitmentId);
+
+        // Re-submitting the same (pk,msg,sig) after it's accepted must revert.
+        vm.prank(submitter);
+        vm.expectRevert(MLDSAOptimistic.AlreadyVerified.selector);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, keccak256("r2"));
+    }
+
     // ─── Finalize tests ─────────────────────────────────
 
     function test_finalizeAfterWindow() public {
@@ -59,9 +97,7 @@ contract MLDSAOptimisticTest is Test {
 
         // Get the commitment ID
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        bytes32 commitmentId = keccak256(
-            abi.encodePacked(sigHash, merkleRoot, submitter, block.number)
-        );
+        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
 
         // Fast-forward past challenge window
         vm.roll(block.number + CHALLENGE_WINDOW + 1);
@@ -83,9 +119,7 @@ contract MLDSAOptimisticTest is Test {
         optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
 
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        bytes32 commitmentId = keccak256(
-            abi.encodePacked(sigHash, merkleRoot, submitter, block.number)
-        );
+        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
 
         // Before finalize: verify returns false
         assertFalse(optimistic.verify(pk, message, sig));
@@ -105,9 +139,7 @@ contract MLDSAOptimisticTest is Test {
         optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
 
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        bytes32 commitmentId = keccak256(
-            abi.encodePacked(sigHash, merkleRoot, submitter, block.number)
-        );
+        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
 
         // Try to finalize immediately (within window)
         vm.expectRevert(MLDSAOptimistic.ChallengeWindowActive.selector);
@@ -127,9 +159,7 @@ contract MLDSAOptimisticTest is Test {
         optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
 
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        bytes32 commitmentId = keccak256(
-            abi.encodePacked(sigHash, merkleRoot, submitter, block.number)
-        );
+        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
 
         vm.roll(block.number + CHALLENGE_WINDOW + 1);
         optimistic.finalize(commitmentId);
