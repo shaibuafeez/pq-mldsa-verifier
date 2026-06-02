@@ -7,3 +7,7 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 fs_permissions = [{ access = "read", path = "test/vectors" }]
+remappings = [
+    "erc7579/=test/integration/shims/erc7579/",
+    "account-abstraction/=test/integration/shims/account-abstraction/",
+]

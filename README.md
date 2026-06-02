@@ -40,6 +40,8 @@ bool valid = verifier.verify(publicKey, messageHash, signature);
 
 Both implement quantumFDN's exact [`IMLDSAVerifier`](src/interfaces/IMLDSAVerifier.sol) interface. Their `PQValidatorModule.sol` calls our contract with zero code changes — swap the address, done.
 
+This is **proven, not asserted**: [`test/integration/PQWalletIntegration.t.sol`](test/integration/PQWalletIntegration.t.sol) drives the *unmodified* upstream `PQValidatorModule` against this verifier and validates a real ML-DSA-65 UserOp end-to-end — using the same `@noble`-generated vectors that `pq-smart-wallet` ships. The wallet's own suite can only `vm.mockCall` the verifier to return `true` (its production verifier is Arbitrum Stylus/WASM and can't run in the EVM); this is the first test that runs the validator pipeline against on-chain ML-DSA math. Drop this verifier in and the wallet runs on any EVM chain.
+
 ## Quick Start
 
 ```bash
@@ -47,7 +49,7 @@ Both implement quantumFDN's exact [`IMLDSAVerifier`](src/interfaces/IMLDSAVerifi
 git clone https://github.com/shaibuafeez/pq-mldsa-verifier.git
 cd pq-mldsa-verifier
 
-# Build & test (27 Solidity tests, includes real ML-DSA-65 signature verification)
+# Build & test (33 Solidity tests: unit + real ML-DSA-65 verification + wallet integration)
 forge build && forge test -vv
 
 # Run the end-to-end demo (keygen → sign → hints → Merkle proofs)
