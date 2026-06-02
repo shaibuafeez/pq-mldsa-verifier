@@ -21,6 +21,9 @@ contract OptimisticHarness is MLDSAOptimistic {
 ///         an honest prover is never penalized.
 contract MLDSAOptimisticChallengeTest is Test {
     // opcodes (mirror MLDSAOptimistic's internal constants)
+    uint8 constant OP_EXPANDA = 0;
+    uint8 constant OP_SHAKE256_64 = 1;
+    uint8 constant OP_SAMPLEINBALL = 2;
     uint8 constant OP_NTT = 3;
     uint8 constant OP_INTT = 4;
     uint8 constant OP_MUL = 5;
@@ -176,6 +179,39 @@ contract MLDSAOptimisticChallengeTest is Test {
 
         (,,,,, MLDSAOptimistic.VerificationStatus status) = opt.commitments(id);
         assertEq(uint256(status), uint256(MLDSAOptimistic.VerificationStatus.Rejected), "rejected");
+    }
+
+    // ─── fraud proof also covers the hash/sampling steps ───────────────
+
+    function _expectCaught(uint8 opcode, bytes memory input) internal {
+        bytes memory wrong = opt.exec(opcode, input);
+        wrong[wrong.length - 1] = bytes1(uint8(wrong[wrong.length - 1]) ^ 0xFF);
+
+        (bytes32 id, bytes32[] memory proof) = _submitWithCorruptedStep(opcode, input, wrong);
+
+        vm.prank(challenger);
+        opt.challenge(id, uint32(0), opcode, input, wrong, proof);
+
+        (,,,,, MLDSAOptimistic.VerificationStatus status) = opt.commitments(id);
+        assertEq(uint256(status), uint256(MLDSAOptimistic.VerificationStatus.Rejected), "must be rejected");
+    }
+
+    function test_Challenge_CatchesCorruptedExpandA() public {
+        bytes memory seed = new bytes(34); // rho(32) || col || row
+        seed[0] = 0xAB;
+        _expectCaught(OP_EXPANDA, seed);
+    }
+
+    function test_Challenge_CatchesCorruptedShake256() public {
+        bytes memory input = new bytes(100);
+        input[0] = 0xCD;
+        _expectCaught(OP_SHAKE256_64, input);
+    }
+
+    function test_Challenge_CatchesCorruptedSampleInBall() public {
+        bytes memory cTilde = new bytes(48); // c_tilde
+        cTilde[0] = 0xEF;
+        _expectCaught(OP_SAMPLEINBALL, cTilde);
     }
 
     // ─── honest prover is NOT penalized ─────────────────

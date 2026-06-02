@@ -112,6 +112,10 @@ contract MLDSAOptimistic is IMLDSAVerifier {
     error ChallengeWindowExpired();
     error InvalidMerkleProof();
     error StepVerificationFailed();
+    error InvalidPublicKeyLength(uint256 actual);
+    error InvalidSignatureLength(uint256 actual);
+    error ZeroMerkleRoot();
+    error AlreadyVerified();
 
     // ─── Constructor ────────────────────────────────────
 
@@ -136,8 +140,17 @@ contract MLDSAOptimistic is IMLDSAVerifier {
         bytes32 merkleRoot
     ) external payable {
         if (msg.value < minBond) revert InsufficientBond();
+        // Cheap sanity checks (reviewer #6/#7). These do not make the optimistic
+        // path sound on their own — trace linkage is still required (see
+        // SECURITY.md) — but they reject obviously malformed submissions early.
+        if (publicKey.length != MLDSAParams.PK_SIZE) revert InvalidPublicKeyLength(publicKey.length);
+        if (signature.length != MLDSAParams.SIG_SIZE) revert InvalidSignatureLength(signature.length);
+        if (merkleRoot == bytes32(0)) revert ZeroMerkleRoot();
 
         bytes32 sigHash = keccak256(abi.encodePacked(publicKey, message, signature));
+        // Reject re-submitting a tuple that's already been accepted.
+        if (accepted[sigHash] != bytes32(0)) revert AlreadyVerified();
+
         bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, msg.sender, block.number));
 
         if (commitments[commitmentId].status != VerificationStatus.None) {
