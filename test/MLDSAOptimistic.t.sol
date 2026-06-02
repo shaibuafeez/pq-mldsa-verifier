@@ -38,7 +38,7 @@ contract MLDSAOptimisticTest is Test {
         bytes32 merkleRoot = keccak256("fake-merkle-root");
 
         vm.prank(submitter);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot, true);
     }
 
     function test_submitRevertsInsufficientBond() public {
@@ -46,7 +46,7 @@ contract MLDSAOptimisticTest is Test {
 
         vm.prank(submitter);
         vm.expectRevert(MLDSAOptimistic.InsufficientBond.selector);
-        optimistic.submitVerification{value: MIN_BOND - 1}(pk, message, sig, merkleRoot);
+        optimistic.submitVerification{value: MIN_BOND - 1}(pk, message, sig, merkleRoot, true);
     }
 
     // ─── Submit input-validation guards ─────────────────
@@ -55,36 +55,63 @@ contract MLDSAOptimisticTest is Test {
         bytes memory badPk = new bytes(100);
         vm.prank(submitter);
         vm.expectRevert(abi.encodeWithSelector(MLDSAOptimistic.InvalidPublicKeyLength.selector, uint256(100)));
-        optimistic.submitVerification{value: MIN_BOND}(badPk, message, sig, keccak256("r"));
+        optimistic.submitVerification{value: MIN_BOND}(badPk, message, sig, keccak256("r"), true);
     }
 
     function test_submitRevertsBadSignatureLength() public {
         bytes memory badSig = new bytes(100);
         vm.prank(submitter);
         vm.expectRevert(abi.encodeWithSelector(MLDSAOptimistic.InvalidSignatureLength.selector, uint256(100)));
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, badSig, keccak256("r"));
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, badSig, keccak256("r"), true);
     }
 
     function test_submitRevertsZeroMerkleRoot() public {
         vm.prank(submitter);
         vm.expectRevert(MLDSAOptimistic.ZeroMerkleRoot.selector);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, bytes32(0));
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, bytes32(0), true);
     }
 
     function test_submitRevertsAlreadyVerified() public {
         bytes32 merkleRoot = keccak256("fake-merkle-root");
         vm.prank(submitter);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot, true);
 
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
+        bytes32 commitmentId = keccak256(
+            abi.encodePacked(optimistic.headerHashFor(pk, message, sig, true), merkleRoot, submitter, block.number)
+        );
         vm.roll(block.number + CHALLENGE_WINDOW + 1);
         optimistic.finalize(commitmentId);
 
         // Re-submitting the same (pk,msg,sig) after it's accepted must revert.
         vm.prank(submitter);
         vm.expectRevert(MLDSAOptimistic.AlreadyVerified.selector);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, keccak256("r2"));
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, keccak256("r2"), true);
+    }
+
+    // ─── Trace header: claimed-result gating ────────────
+
+    function test_claimedResultFalse_NotVerifiable() public {
+        bytes32 merkleRoot = keccak256("reject-trace");
+        // Submit a trace that *claims* the signature is invalid.
+        vm.prank(submitter);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot, false);
+
+        bytes32 commitmentId = keccak256(
+            abi.encodePacked(optimistic.headerHashFor(pk, message, sig, false), merkleRoot, submitter, block.number)
+        );
+        vm.roll(block.number + CHALLENGE_WINDOW + 1);
+        optimistic.finalize(commitmentId);
+
+        // Finalized, but a reject-claim must never make verify() return true.
+        assertFalse(optimistic.verify(pk, message, sig), "reject-claim must not verify");
+    }
+
+    function test_headerBindsClaimedResult() public view {
+        assertTrue(
+            optimistic.headerHashFor(pk, message, sig, true) != optimistic.headerHashFor(pk, message, sig, false),
+            "claimed result must change the header hash"
+        );
     }
 
     // ─── Finalize tests ─────────────────────────────────
@@ -93,11 +120,13 @@ contract MLDSAOptimisticTest is Test {
         bytes32 merkleRoot = keccak256("fake-merkle-root");
 
         vm.prank(submitter);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot, true);
 
         // Get the commitment ID
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
+        bytes32 commitmentId = keccak256(
+            abi.encodePacked(optimistic.headerHashFor(pk, message, sig, true), merkleRoot, submitter, block.number)
+        );
 
         // Fast-forward past challenge window
         vm.roll(block.number + CHALLENGE_WINDOW + 1);
@@ -116,10 +145,12 @@ contract MLDSAOptimisticTest is Test {
         bytes32 merkleRoot = keccak256("fake-merkle-root");
 
         vm.prank(submitter);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot, true);
 
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
+        bytes32 commitmentId = keccak256(
+            abi.encodePacked(optimistic.headerHashFor(pk, message, sig, true), merkleRoot, submitter, block.number)
+        );
 
         // Before finalize: verify returns false
         assertFalse(optimistic.verify(pk, message, sig));
@@ -136,10 +167,12 @@ contract MLDSAOptimisticTest is Test {
         bytes32 merkleRoot = keccak256("fake-merkle-root");
 
         vm.prank(submitter);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot, true);
 
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
+        bytes32 commitmentId = keccak256(
+            abi.encodePacked(optimistic.headerHashFor(pk, message, sig, true), merkleRoot, submitter, block.number)
+        );
 
         // Try to finalize immediately (within window)
         vm.expectRevert(MLDSAOptimistic.ChallengeWindowActive.selector);
@@ -156,10 +189,12 @@ contract MLDSAOptimisticTest is Test {
         bytes32 merkleRoot = keccak256("fake-merkle-root");
 
         vm.prank(submitter);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot, true);
 
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, submitter, block.number));
+        bytes32 commitmentId = keccak256(
+            abi.encodePacked(optimistic.headerHashFor(pk, message, sig, true), merkleRoot, submitter, block.number)
+        );
 
         vm.roll(block.number + CHALLENGE_WINDOW + 1);
         optimistic.finalize(commitmentId);
@@ -179,10 +214,10 @@ contract MLDSAOptimisticTest is Test {
         bytes32 message2 = bytes32(uint256(999));
 
         vm.prank(submitter);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot1);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot1, true);
 
         vm.prank(submitter);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message2, sig, merkleRoot2);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message2, sig, merkleRoot2, true);
 
         // Both should be pending (verify returns false for both)
         assertFalse(optimistic.verify(pk, message, sig));
@@ -196,7 +231,7 @@ contract MLDSAOptimisticTest is Test {
 
         uint256 gasBefore = gasleft();
         vm.prank(submitter);
-        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot);
+        optimistic.submitVerification{value: MIN_BOND}(pk, message, sig, merkleRoot, true);
         uint256 gasUsed = gasBefore - gasleft();
 
         // Should be well under 1M gas

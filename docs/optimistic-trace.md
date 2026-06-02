@@ -153,7 +153,7 @@ A trace that skips a required precondition fails the "wrong graph" linkage check
 - [x] Fraud tests for every step type (incl. ExpandA/SHAKE/SampleInBall)
 - [x] Submit-time input validation (lengths, nonzero root, no double-accept)
 - [x] Final-result opcodes `ENCODE_W1` / `SHAKE256_48` / `COMPARE_CTILDE`
-- [ ] Trace header + public-input binding (§3)
+- [~] Trace header + public-input binding (§3) — header + claimed-result gating landed; leaf-level binding pending
 - [ ] Versioned domain-separated position-aware leaves (§4)
 - [ ] Linkage challenge `challengeLinkage` (§5)
 - [ ] Decode/precondition trace coverage (§7)

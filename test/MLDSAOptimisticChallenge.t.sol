@@ -129,10 +129,11 @@ contract MLDSAOptimisticChallengeTest is Test {
         bytes32 message = bytes32(uint256(0xabc));
 
         vm.prank(submitter);
-        opt.submitVerification{value: MIN_BOND}(pk, message, sig, root);
+        opt.submitVerification{value: MIN_BOND}(pk, message, sig, root, true);
 
         bytes32 sigHash = keccak256(abi.encodePacked(pk, message, sig));
-        commitmentId = keccak256(abi.encodePacked(sigHash, root, submitter, block.number));
+        commitmentId =
+            keccak256(abi.encodePacked(opt.headerHashFor(pk, message, sig, true), root, submitter, block.number));
 
         proof = new bytes32[](1);
         proof[0] = sibling;
@@ -157,7 +158,7 @@ contract MLDSAOptimisticChallengeTest is Test {
 
         // challenger is paid the bond; commitment is rejected
         assertEq(challenger.balance, balBefore + MIN_BOND, "challenger rewarded");
-        (,,,,, MLDSAOptimistic.VerificationStatus status) = opt.commitments(id);
+        (,,,,, MLDSAOptimistic.VerificationStatus status,,) = opt.commitments(id);
         assertEq(uint256(status), uint256(MLDSAOptimistic.VerificationStatus.Rejected), "rejected");
     }
 
@@ -177,7 +178,7 @@ contract MLDSAOptimisticChallengeTest is Test {
         vm.prank(challenger);
         opt.challenge(id, uint32(0), OP_MUL, input, wrong, proof);
 
-        (,,,,, MLDSAOptimistic.VerificationStatus status) = opt.commitments(id);
+        (,,,,, MLDSAOptimistic.VerificationStatus status,,) = opt.commitments(id);
         assertEq(uint256(status), uint256(MLDSAOptimistic.VerificationStatus.Rejected), "rejected");
     }
 
@@ -192,7 +193,7 @@ contract MLDSAOptimisticChallengeTest is Test {
         vm.prank(challenger);
         opt.challenge(id, uint32(0), opcode, input, wrong, proof);
 
-        (,,,,, MLDSAOptimistic.VerificationStatus status) = opt.commitments(id);
+        (,,,,, MLDSAOptimistic.VerificationStatus status,,) = opt.commitments(id);
         assertEq(uint256(status), uint256(MLDSAOptimistic.VerificationStatus.Rejected), "must be rejected");
     }
 
@@ -234,7 +235,7 @@ contract MLDSAOptimisticChallengeTest is Test {
         (bytes32 id, bytes32[] memory proof) = _submitWithCorruptedStep(12, input, wrong);
         vm.prank(challenger);
         opt.challenge(id, uint32(0), 12, input, wrong, proof);
-        (,,,,, MLDSAOptimistic.VerificationStatus status) = opt.commitments(id);
+        (,,,,, MLDSAOptimistic.VerificationStatus status,,) = opt.commitments(id);
         assertEq(uint256(status), uint256(MLDSAOptimistic.VerificationStatus.Rejected), "compare must be caught");
     }
 
@@ -256,7 +257,7 @@ contract MLDSAOptimisticChallengeTest is Test {
         opt.challenge(id, uint32(0), OP_NTT, input, correct, proof);
 
         // commitment remains pending
-        (,,,,, MLDSAOptimistic.VerificationStatus status) = opt.commitments(id);
+        (,,,,, MLDSAOptimistic.VerificationStatus status,,) = opt.commitments(id);
         assertEq(uint256(status), uint256(MLDSAOptimistic.VerificationStatus.Pending), "still pending");
     }
 

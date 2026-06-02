@@ -50,6 +50,37 @@ contract MLDSAOptimistic is IMLDSAVerifier {
     ///      MUST match the off-chain hint generator's encodeCoeffs().
     uint256 internal constant POLY_BYTES = 768; // 256 * 3
 
+    // ─── Trace header (TRACE_V1) — see docs/optimistic-trace.md §3 ───────
+    // Binds a commitment to its public inputs, parameter set, length, and the
+    // claimed accept/reject result. This is step 1 of the soundness work
+    // (header + public-input binding); the leaf-format and linkage checks
+    // (§4/§5) build on it and are not yet implemented.
+    bytes4 internal constant TRACE_VERSION = 0x54524331; // "TRC1"
+    uint16 internal constant PARAM_SET = 65; // ML-DSA-65
+    uint32 internal constant EXPECTED_STEP_COUNT = 138; // full trace incl. final-result steps
+    bytes32 internal constant TRACE_HEADER_DOMAIN = keccak256("MLDSA_TRACE_HEADER_V1");
+
+    /// @notice Canonical header hash for a tuple + claimed result. Off-chain
+    ///         provers and tests derive the commitment id from this.
+    function headerHashFor(bytes calldata publicKey, bytes32 message, bytes calldata signature, bool claimedResult)
+        public
+        pure
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                TRACE_HEADER_DOMAIN,
+                TRACE_VERSION,
+                PARAM_SET,
+                keccak256(publicKey),
+                message,
+                keccak256(signature),
+                EXPECTED_STEP_COUNT,
+                claimedResult
+            )
+        );
+    }
+
     // ─── Types ──────────────────────────────────────────
 
     enum VerificationStatus {
@@ -67,6 +98,9 @@ contract MLDSAOptimistic is IMLDSAVerifier {
         uint256 submitBlock; // Block number when submitted
         uint256 bond; // ETH bond (slashed if challenge succeeds)
         VerificationStatus status;
+        // TRACE_V1 fields appended (keeps earlier field positions stable)
+        bytes32 headerHash; // binds public inputs + param set + step count + claimed result
+        bool claimedResult; // prover's claim; only accept-claims become verifiable
     }
 
     // ─── State ──────────────────────────────────────────
@@ -126,10 +160,13 @@ contract MLDSAOptimistic is IMLDSAVerifier {
     /// @param merkleRoot Merkle root of all intermediate verification steps.
     /// @dev The submitter must provide a bond. If the commitment is not
     ///      challenged within the window, call finalize() to accept it.
-    function submitVerification(bytes calldata publicKey, bytes32 message, bytes calldata signature, bytes32 merkleRoot)
-        external
-        payable
-    {
+    function submitVerification(
+        bytes calldata publicKey,
+        bytes32 message,
+        bytes calldata signature,
+        bytes32 merkleRoot,
+        bool claimedResult
+    ) external payable {
         if (msg.value < minBond) revert InsufficientBond();
         // Cheap sanity checks (reviewer #6/#7). These do not make the optimistic
         // path sound on their own — trace linkage is still required (see
@@ -142,7 +179,10 @@ contract MLDSAOptimistic is IMLDSAVerifier {
         // Reject re-submitting a tuple that's already been accepted.
         if (accepted[sigHash] != bytes32(0)) revert AlreadyVerified();
 
-        bytes32 commitmentId = keccak256(abi.encodePacked(sigHash, merkleRoot, msg.sender, block.number));
+        // TRACE_V1 header binds the commitment to (pk, message, sig), the
+        // parameter set, the expected step count, and the claimed result.
+        bytes32 headerHash = headerHashFor(publicKey, message, signature, claimedResult);
+        bytes32 commitmentId = keccak256(abi.encodePacked(headerHash, merkleRoot, msg.sender, block.number));
 
         if (commitments[commitmentId].status != VerificationStatus.None) {
             revert CommitmentExists();
@@ -154,7 +194,9 @@ contract MLDSAOptimistic is IMLDSAVerifier {
             signatureHash: sigHash,
             submitBlock: block.number,
             bond: msg.value,
-            status: VerificationStatus.Pending
+            status: VerificationStatus.Pending,
+            headerHash: headerHash,
+            claimedResult: claimedResult
         });
 
         emit VerificationSubmitted(commitmentId, sigHash, merkleRoot, msg.sender);
@@ -226,7 +268,15 @@ contract MLDSAOptimistic is IMLDSAVerifier {
         if (block.number <= c.submitBlock + challengeWindow) revert ChallengeWindowActive();
 
         c.status = VerificationStatus.Verified;
-        accepted[c.signatureHash] = commitmentId;
+        // Only an accept-claim makes the tuple verifiable. A claimedResult==false
+        // trace (proving a signature is invalid) finalizes but never sets
+        // `accepted`, so verify() stays false for it.
+        // NOTE: this binds the *claimed* result. Enforcing that the claim matches
+        // the trace's actual final COMPARE_CTILDE step requires the leaf-format
+        // + linkage checks (docs/optimistic-trace.md §4/§5), not yet implemented.
+        if (c.claimedResult) {
+            accepted[c.signatureHash] = commitmentId;
+        }
 
         // Return bond to submitter
         uint256 bond = c.bond;
