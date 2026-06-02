@@ -3,6 +3,9 @@ pragma solidity ^0.8.21;
 
 import {IMLDSAVerifier} from "./interfaces/IMLDSAVerifier.sol";
 import {MLDSAParams} from "./libraries/MLDSAParams.sol";
+import {NTT} from "./libraries/NTT.sol";
+import {MLDSAVerify} from "./libraries/MLDSAVerify.sol";
+import {Keccak} from "./libraries/Keccak.sol";
 
 /// @title MLDSAOptimistic
 /// @notice Optimistic ML-DSA-65 verifier using naysayer proofs.
@@ -21,6 +24,28 @@ import {MLDSAParams} from "./libraries/MLDSAParams.sol";
 ///      but the verify() function checks the commitment registry rather
 ///      than computing the full verification.
 contract MLDSAOptimistic is IMLDSAVerifier {
+    // ─── Step opcodes ───────────────────────────────────
+    // Every intermediate verification step is one of these primitive,
+    // independently re-executable operations. The off-chain hint generator
+    // decomposes full FIPS 204 verification into a sequence of these steps;
+    // a challenger disputes any single one and the contract re-runs just that
+    // primitive on-chain. (Replaces the previous polynomial-op stub.)
+    uint8 internal constant OP_EXPANDA = 0; // SHAKE-128 rejection sampling (one A matrix entry)
+    uint8 internal constant OP_SHAKE256_64 = 1; // SHAKE-256 -> 64 bytes (tr, mu)
+    uint8 internal constant OP_SAMPLEINBALL = 2; // challenge polynomial from c_tilde
+    uint8 internal constant OP_NTT = 3; // forward NTT (1 poly -> 1 poly)
+    uint8 internal constant OP_INTT = 4; // inverse NTT (1 poly -> 1 poly)
+    uint8 internal constant OP_MUL = 5; // pointwise multiply (2 polys -> 1)
+    uint8 internal constant OP_ADD = 6; // pointwise add (2 polys -> 1)
+    uint8 internal constant OP_SUB = 7; // pointwise subtract (2 polys -> 1)
+    uint8 internal constant OP_SCALE2D = 8; // multiply each coeff by 2^D mod Q (1 poly -> 1)
+    uint8 internal constant OP_USEHINT = 9; // UseHint(hintPoly, wPoly) -> w1 poly
+
+    /// @dev Canonical polynomial serialization: 256 coefficients, 3 bytes each
+    ///      (big-endian). Coefficients are < Q < 2^23 so 3 bytes is exact.
+    ///      MUST match the off-chain hint generator's encodeCoeffs().
+    uint256 internal constant POLY_BYTES = 768; // 256 * 3
+
     // ─── Types ──────────────────────────────────────────
 
     enum VerificationStatus {
@@ -135,17 +160,20 @@ contract MLDSAOptimistic is IMLDSAVerifier {
 
     /// @notice Challenge a pending verification by proving a step is incorrect.
     /// @param commitmentId The commitment to challenge.
-    /// @param stepIndex The index of the disputed step.
+    /// @param stepIndex The ordinal index of the disputed step (4-byte, big-endian
+    ///        in the leaf preimage; must match the hint generator).
+    /// @param opcode The primitive operation of the disputed step (see OP_* above).
     /// @param stepInput The input to the disputed step.
     /// @param stepOutput The claimed (incorrect) output of the step.
-    /// @param merkleProof Merkle proof that (stepIndex, stepInput, stepOutput)
+    /// @param merkleProof Merkle proof that (stepIndex, opcode, stepInput, stepOutput)
     ///        is committed in the Merkle tree.
-    /// @dev The contract re-executes the single step on-chain and checks
+    /// @dev The contract re-executes the single primitive on-chain and checks
     ///      if the committed output matches. If it doesn't, the challenge
     ///      succeeds and the challenger gets the bond.
     function challenge(
         bytes32 commitmentId,
-        uint256 stepIndex,
+        uint32 stepIndex,
+        uint8 opcode,
         bytes calldata stepInput,
         bytes calldata stepOutput,
         bytes32[] calldata merkleProof
@@ -154,14 +182,16 @@ contract MLDSAOptimistic is IMLDSAVerifier {
         if (c.status != VerificationStatus.Pending) revert NotPending();
         if (block.number > c.submitBlock + challengeWindow) revert ChallengeWindowExpired();
 
-        // Verify the Merkle proof: the claimed step data is in the committed tree
-        bytes32 leaf = keccak256(abi.encodePacked(stepIndex, stepInput, stepOutput));
+        // Verify the Merkle proof: the claimed step data is in the committed tree.
+        // Leaf preimage layout matches the off-chain generator exactly:
+        //   uint32(stepIndex) ++ uint8(opcode) ++ stepInput ++ stepOutput
+        bytes32 leaf = keccak256(abi.encodePacked(stepIndex, opcode, stepInput, stepOutput));
         if (!verifyMerkleProof(merkleProof, c.merkleRoot, leaf)) {
             revert InvalidMerkleProof();
         }
 
         // Re-execute the step on-chain
-        bytes memory correctOutput = executeStep(stepIndex, stepInput);
+        bytes memory correctOutput = executeStep(opcode, stepInput);
 
         // If the committed output doesn't match, the challenge succeeds
         if (keccak256(correctOutput) != keccak256(stepOutput)) {
@@ -238,49 +268,88 @@ contract MLDSAOptimistic is IMLDSAVerifier {
         return hash == root;
     }
 
-    /// @dev Execute a single verification step on-chain.
-    ///      Steps are identified by index and correspond to discrete operations
-    ///      in the ML-DSA-65 verification algorithm.
+    /// @dev Execute a single verification step on-chain by opcode.
+    ///      Every step is a primitive, deterministic operation that is fully
+    ///      re-executed here — there is no longer any hash-of-input stub, so a
+    ///      prover who commits a wrong output for ANY operation type (including
+    ///      NTT / pointwise / UseHint) is caught by re-execution.
     ///
-    /// Step categories:
-    ///   0-29:  ExpandA matrix entries (SHAKE-128 rejection sampling)
-    ///   30:    tr = SHAKE-256(pk, 64)
-    ///   31:    mu = SHAKE-256(tr || M', 64)
-    ///   32:    c = SampleInBall(c_tilde)
-    ///   33:    NTT(c)
-    ///   34-38: NTT(z[i]) for i in 0..4
-    ///   39-44: NTT(t1[i] * 2^d) for i in 0..5
-    ///   45-74: A_hat[i][j] * z_hat[j] pointwise (i*5+j)
-    ///   75-80: c_hat * t1_hat[i] pointwise
-    ///   81-86: Subtraction and InvNTT for w'_approx[i]
-    ///   87-92: UseHint(h[i], w'_approx[i])
-    ///   93:    w1Encode + final hash comparison
-    function executeStep(
-        uint256 stepIndex,
-        bytes calldata stepInput
-    ) internal pure returns (bytes memory) {
-        // Each step type performs a specific computation and returns the result.
-        // The hint generator pre-computes all these steps off-chain.
-
-        if (stepIndex < 30) {
-            // ExpandA: SHAKE-128 rejection sampling for one matrix entry
+    ///      Soundness note: this makes each step *individually* verifiable. Full
+    ///      L1 soundness additionally requires step *linkage* (that each step's
+    ///      output is the next step's input, bound to pk/msg/sig and the final
+    ///      accept). That linkage check is the documented remaining work — see
+    ///      SECURITY.md. This function closes the re-execution gap only.
+    function executeStep(uint8 opcode, bytes calldata stepInput) internal pure returns (bytes memory) {
+        if (opcode == OP_EXPANDA) {
+            // SHAKE-128 rejection sampling for one A matrix entry.
             // Input: rho (32 bytes) || row (1 byte) || col (1 byte)
             return _stepExpandA(stepInput);
-        } else if (stepIndex == 30) {
-            // tr = SHAKE-256(pk, 64)
+        } else if (opcode == OP_SHAKE256_64) {
+            // tr = SHAKE-256(pk, 64)  or  mu = SHAKE-256(tr || M', 64)
             return Keccak.shake256(stepInput, 64);
-        } else if (stepIndex == 31) {
-            // mu = SHAKE-256(tr || M', 64)
-            return Keccak.shake256(stepInput, 64);
-        } else if (stepIndex == 32) {
-            // SampleInBall - complex step, verify via output hash
+        } else if (opcode == OP_SAMPLEINBALL) {
+            // challenge polynomial c = SampleInBall(c_tilde)
             return _stepSampleInBall(stepInput);
+        } else if (opcode == OP_NTT) {
+            uint256[256] memory p = _decodePoly(stepInput, 0);
+            NTT.ntt(p);
+            return _encodePoly(p);
+        } else if (opcode == OP_INTT) {
+            uint256[256] memory p = _decodePoly(stepInput, 0);
+            NTT.invNtt(p);
+            return _encodePoly(p);
+        } else if (opcode == OP_SCALE2D) {
+            uint256[256] memory p = _decodePoly(stepInput, 0);
+            uint256 factor = uint256(1) << MLDSAParams.D;
+            for (uint256 i = 0; i < 256; i++) {
+                p[i] = mulmod(p[i], factor, MLDSAParams.Q);
+            }
+            return _encodePoly(p);
+        } else if (opcode == OP_MUL || opcode == OP_ADD || opcode == OP_SUB) {
+            require(stepInput.length == 2 * POLY_BYTES, "binop input");
+            uint256[256] memory a = _decodePoly(stepInput, 0);
+            uint256[256] memory b = _decodePoly(stepInput, POLY_BYTES);
+            uint256[256] memory r;
+            if (opcode == OP_MUL) {
+                r = NTT.pointwiseMul(a, b);
+            } else if (opcode == OP_ADD) {
+                r = NTT.pointwiseAdd(a, b);
+            } else {
+                r = NTT.pointwiseSub(a, b);
+            }
+            return _encodePoly(r);
+        } else if (opcode == OP_USEHINT) {
+            // input: hint poly (768) || w poly (768); output: w1 poly (768)
+            require(stepInput.length == 2 * POLY_BYTES, "usehint input");
+            uint256[256] memory hint = _decodePoly(stepInput, 0);
+            uint256[256] memory w = _decodePoly(stepInput, POLY_BYTES);
+            uint256[256] memory w1;
+            for (uint256 i = 0; i < 256; i++) {
+                w1[i] = MLDSAVerify.useHint(hint[i], w[i]);
+            }
+            return _encodePoly(w1);
         }
+        revert("unknown opcode");
+    }
 
-        // For NTT and polynomial operations, the step input contains
-        // the polynomial coefficients and the output is the transformed coefficients.
-        // These are verified by re-executing the operation.
-        return _stepPolynomialOp(stepIndex, stepInput);
+    // ─── Canonical polynomial (de)serialization (3 bytes/coeff, big-endian) ──
+
+    function _decodePoly(bytes calldata b, uint256 off) private pure returns (uint256[256] memory p) {
+        require(b.length >= off + POLY_BYTES, "poly len");
+        for (uint256 i = 0; i < 256; i++) {
+            uint256 o = off + i * 3;
+            p[i] = (uint256(uint8(b[o])) << 16) | (uint256(uint8(b[o + 1])) << 8) | uint256(uint8(b[o + 2]));
+        }
+    }
+
+    function _encodePoly(uint256[256] memory p) private pure returns (bytes memory out) {
+        out = new bytes(POLY_BYTES);
+        for (uint256 i = 0; i < 256; i++) {
+            uint256 v = p[i];
+            out[i * 3] = bytes1(uint8(v >> 16));
+            out[i * 3 + 1] = bytes1(uint8(v >> 8));
+            out[i * 3 + 2] = bytes1(uint8(v));
+        }
     }
 
     function _stepExpandA(bytes calldata input) private pure returns (bytes memory) {
@@ -336,16 +405,4 @@ contract MLDSAOptimistic is IMLDSAVerifier {
         return result;
     }
 
-    function _stepPolynomialOp(
-        uint256, /* stepIndex */
-        bytes calldata input
-    ) private pure returns (bytes memory) {
-        // Generic polynomial operation re-execution
-        // The hint generator determines what each step does
-        // and the challenger provides the input needed to re-execute
-        return abi.encodePacked(keccak256(input));
-    }
 }
-
-// Import Keccak for use in executeStep
-import {Keccak} from "./libraries/Keccak.sol";

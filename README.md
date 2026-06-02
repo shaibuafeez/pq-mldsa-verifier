@@ -3,7 +3,7 @@
 ![Solidity](https://img.shields.io/badge/Solidity-%3E%3D0.8.21-363636?logo=solidity)
 ![FIPS 204](https://img.shields.io/badge/FIPS_204-ML--DSA--65-2563eb)
 ![Post-Quantum](https://img.shields.io/badge/post--quantum-NIST_Level_3-16a34a)
-![Tests](https://img.shields.io/badge/tests-38_passing-16a34a)
+![Tests](https://img.shields.io/badge/tests-58_passing-16a34a)
 ![License](https://img.shields.io/badge/license-MIT-gray)
 
 **Pure-Solidity on-chain verification of ML-DSA-65 (FIPS 204) post-quantum digital signatures.**
@@ -35,8 +35,8 @@ bool valid = verifier.verify(publicKey, messageHash, signature);
 
 | Mode | Contract | Gas | Runs On |
 |------|----------|-----|---------|
-| **Full verification** | `MLDSAVerifier.sol` | ~163M | L2s with high gas limits, off-chain, testing |
-| **Optimistic verification** | `MLDSAOptimistic.sol` | ~200K | Ethereum L1, any EVM chain |
+| **Full verification** | `MLDSAVerifier.sol` | ~163M | L2s with high gas limits, off-chain, testing. **Production-ready, fully tested.** |
+| **Optimistic verification** | `MLDSAOptimistic.sol` | ~200K submit | Cheaper path for L1. **PoC** — every step is now re-executable on-chain and challengeable (see below), but full L1 soundness still needs step-*linkage* binding. Not production-ready. |
 
 Both implement quantumFDN's exact [`IMLDSAVerifier`](src/interfaces/IMLDSAVerifier.sol) interface. Their `PQValidatorModule.sol` calls our contract with zero code changes — swap the address, done.
 
@@ -49,7 +49,7 @@ This is **proven, not asserted**: [`test/integration/PQWalletIntegration.t.sol`]
 git clone https://github.com/shaibuafeez/pq-mldsa-verifier.git
 cd pq-mldsa-verifier
 
-# Build & test (33 Solidity tests: unit + real ML-DSA-65 verification + wallet integration)
+# Build & test (46 Solidity + 12 TS tests: unit, fraud proofs, TS⟷Solidity parity, real wallet integration)
 forge build && forge test -vv
 
 # Run the end-to-end demo (keygen → sign → hints → Merkle proofs)
@@ -85,8 +85,8 @@ contract MyWallet {
 |---------|-----|-----------|--------|--------|
 | Tetration `dilithium-solidity` | >30M | ML-DSA-44 only | EVM | Broken SHAKE, abandoned since 2023 |
 | quantumFDN Stylus verifier | 374K | ML-DSA-65 | Arbitrum only | Production |
-| **This (full)** | **163M** | **ML-DSA-65** | **Any EVM** | 38 tests, cross-validated |
-| **This (optimistic)** | **~200K** | **ML-DSA-65** | **Any EVM** | 38 tests, cross-validated |
+| **This (full)** | **163M** | **ML-DSA-65** | **Any EVM** | 41 tests, cross-validated, production-ready |
+| **This (optimistic)** | **~200K submit** | **ML-DSA-65** | **Any EVM** | PoC — per-step re-execution proven; linkage pending |
 
 ## Architecture
 
@@ -101,7 +101,7 @@ contract MyWallet {
 │  ├── SampleInBall     │              │  │   ├── Keccak.sol           │
 │  └── Merkle tree      │              │  │   ├── MLDSADecode.sol      │
 │                       │              │  │   └── MLDSAParams.sol      │
-│  33 verification      │              │  │                             │
+│  135 verification      │              │  │                             │
 │  steps captured       │              │  MLDSAOptimistic.sol          │
 │                       │              │  ├── submit + ETH bond        │
 └───────────────────────┘              │  ├── challenge window (N blks)│
@@ -126,11 +126,11 @@ src/
 
 hints/
 ├── src/
-│   ├── hint-generator.ts        # Captures 33 intermediate verification steps
+│   ├── hint-generator.ts        # Captures all 135 steps (33 hash/sampling + 102 polynomial)
 │   ├── merkle.ts                # Merkle tree for dispute resolution
 │   └── demo.ts                  # End-to-end demo script
 └── tests/
-    └── hint-generator.test.ts   # 11 tests — proofs, determinism, step validation
+    └── hint-generator.test.ts   # 12 tests — proofs, determinism, parity, step validation
 ```
 
 ## How Optimistic Verification Works
@@ -143,8 +143,8 @@ SUBMIT      Prover runs full verification off-chain.
             Posts ETH bond.                                          ~200K gas
 
 CHALLENGE   Anyone can dispute ONE step during the challenge window.
-            Provides: step index + input + output + Merkle proof.
-            Contract re-executes that single step on-chain.
+            Provides: step index + opcode + input + output + Merkle proof.
+            Contract re-executes that single primitive on-chain.
             Output mismatch → challenge succeeds.                 100-500K gas
 
 FINALIZE    No valid challenge after N blocks?
@@ -158,18 +158,41 @@ SLASH       Challenge proved a wrong step?
 
 Honest prover: never challenged. Dishonest prover: caught and slashed. Same security model as optimistic rollups.
 
+**What's proven today (and what isn't).** Every step is a primitive, deterministic
+operation — ExpandA, SHAKE-256, SampleInBall, NTT, InvNTT, pointwise mul/add/sub,
+scale-by-2^d, UseHint — and the contract re-executes *all* of them on-chain (the
+previous polynomial-step stub is gone). The off-chain generator emits the full
+135-step sequence, and a cross-language parity test re-runs every one of the 102
+polynomial steps on-chain and asserts byte-for-byte agreement
+([`test/OptimisticHintParity.t.sol`](test/OptimisticHintParity.t.sol)). Fraud
+proofs are demonstrated end-to-end: a corrupted step is caught and the bond
+slashed; an honest step cannot be challenged
+([`test/MLDSAOptimisticChallenge.t.sol`](test/MLDSAOptimisticChallenge.t.sol)).
+
+The remaining gap before this is L1-sound: **step linkage.** Each step is
+individually verifiable, but the protocol does not yet enforce that step N's
+output is step N+1's input, nor bind the step sequence to (pk, message,
+signature) and the final accept. Until that linkage check exists, a malicious
+prover could commit individually-correct steps that don't compose into the real
+verification. This is the documented next milestone — see
+[`SECURITY.md`](SECURITY.md). Use the **full** verifier for anything real today.
+
 ## Test Results
 
 ```
-38 tests across 3 suites — 0 failures
+58 tests across 7 suites — 0 failures
 
-┌─────────────────────┬────────┬────────┬─────────┐
-│ Test Suite          │ Passed │ Failed │ Skipped │
-├─────────────────────┼────────┼────────┼─────────┤
-│ MLDSAVerifierTest   │ 18     │ 0      │ 0       │
-│ MLDSAOptimisticTest │ 9      │ 0      │ 0       │
-│ Hint Generator (TS) │ 11     │ 0      │ 0       │
-└─────────────────────┴────────┴────────┴─────────┘
+┌──────────────────────────────┬────────┬────────┬─────────┐
+│ Test Suite                   │ Passed │ Failed │ Skipped │
+├──────────────────────────────┼────────┼────────┼─────────┤
+│ MLDSAVerifierTest            │ 18     │ 0      │ 0       │
+│ MLDSAOptimisticTest          │ 9      │ 0      │ 0       │
+│ MLDSAOptimisticChallengeTest │ 7      │ 0      │ 0       │  ← fraud proofs
+│ OptimisticHintParityTest     │ 1      │ 0      │ 0       │  ← TS⟷Solidity parity (102 steps)
+│ PQWalletIntegrationTest      │ 6      │ 0      │ 0       │  ← real wallet module, no mocks
+│ FuzzTest                     │ 5      │ 0      │ 0       │  ← NTT/pointwise invariants, graceful failure
+│ Hint Generator (TS)          │ 12     │ 0      │ 0       │
+└──────────────────────────────┴────────┴────────┴─────────┘
 ```
 
 | Category | What's Verified |
@@ -179,7 +202,7 @@ Honest prover: never challenged. Dishonest prover: caught and slashed. Same secu
 | **SHAKE-128/256** | Matches NIST known-answer vectors. Empty input: `SHAKE-256("") = 0x46b9dd2b...`. Deterministic. Multi-block squeeze. |
 | **NTT** | Forward/inverse round-trip with sparse and full 256-coefficient polynomials. |
 | **Optimistic flow** | Submit, challenge window, finalize, bond return, insufficient bond revert, independent multi-commitment. |
-| **Merkle proofs** | All 33 intermediate steps produce valid proofs. Deterministic roots across runs. |
+| **Merkle proofs** | All 135 steps produce valid proofs. Deterministic roots across runs. |
 
 ## How ML-DSA-65 Works
 
@@ -245,7 +268,7 @@ const signature = ml_dsa65.sign(message, secretKey);
 const hints = generateHints(publicKey, message, signature);
 
 // hints.merkleRoot  → bytes32 to submit on-chain
-// hints.steps       → 33 intermediate verification steps
+// hints.steps       → 135 steps (33 hash/sampling + 102 polynomial primitives)
 // hints.isValid     → signature validity check
 ```
 
@@ -262,9 +285,11 @@ const hints = generateHints(publicKey, message, signature);
 - [x] Drop-in compatibility with quantumFDN's `IMLDSAVerifier` interface
 - [x] Pass quantumFDN's cross-implementation test vector
 - [x] SHAKE-128/256 matching NIST known-answer vectors
-- [x] Optimistic verification with naysayer proofs for L1 viability
+- [x] Optimistic verification scaffold with naysayer proofs (PoC)
 - [x] Off-chain hint generator with Merkle commitment
-- [ ] Extend hints to cover all ~93 verification steps (NTT, pointwise, UseHint)
+- [x] On-chain re-execution of **all** step primitives (NTT, pointwise, UseHint) — no stub
+- [x] Off-chain generator emits the full 135-step sequence; cross-language parity test
+- [ ] **Step-linkage binding** for full optimistic L1 soundness (the real remaining work)
 - [ ] Foundry deployment scripts for Sepolia and mainnet
 - [ ] Gas optimization pass (assembly for inner loops, precomputed tables)
 - [ ] Support ML-DSA-44 and ML-DSA-87 parameter sets
@@ -275,7 +300,7 @@ const hints = generateHints(publicKey, message, signature);
 | What | Impact | Workaround |
 |------|--------|------------|
 | Full verify > 30M gas limit | Cannot run on Ethereum L1 in a single tx | Use optimistic mode on L1; full mode works on L2 |
-| 33 of ~93 steps in hint generator | Challenger can only dispute hash/sampling steps | Extend to NTT, pointwise, UseHint steps |
+| Optimistic step *linkage* not enforced | Steps are individually re-executable, but not yet chained/bound to inputs — so optimistic mode is PoC, not L1-sound | Use full verifier for production; linkage binding is the next milestone (SECURITY.md) |
 | No deployment scripts | Manual deploy only | Foundry scripts planned |
 | SHAKE is 80% of gas | Inherent to EVM lacking SHAKE opcode | Advocate for EVM SHAKE precompile |
 | Challenge window latency | ~1 hour before signature accepted on L1 | Acceptable for L1; use full verifier on L2 for instant finality |

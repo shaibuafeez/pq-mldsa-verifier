@@ -19,3 +19,4 @@ hints/dist/
 
 # Foundry lock
 foundry.lock
+*.tsbuildinfo

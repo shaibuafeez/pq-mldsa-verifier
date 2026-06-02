@@ -2,6 +2,7 @@ import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { shake128, shake256 } from '@noble/hashes/sha3';
 import { buildMerkleTree, type MerkleTree } from './merkle';
+import { ntt, invNtt, pointwiseMul, pointwiseAdd, pointwiseSub, scale2d, useHint } from './poly';
 
 const Q = 8380417;
 const K = 6;
@@ -13,9 +14,24 @@ const OMEGA = 55;
 const ALPHA = 523776; // 2 * GAMMA2
 const M_HIGHBITS = 16;
 
+// Step opcodes — must match MLDSAOptimistic.sol's OP_* constants.
+export const OP = {
+  EXPANDA: 0,
+  SHAKE256_64: 1,
+  SAMPLEINBALL: 2,
+  NTT: 3,
+  INTT: 4,
+  MUL: 5,
+  ADD: 6,
+  SUB: 7,
+  SCALE2D: 8,
+  USEHINT: 9,
+} as const;
+
 /** A single step in the verification process. */
 export interface VerificationStep {
   index: number;
+  opcode: number;
   description: string;
   input: Uint8Array;
   output: Uint8Array;
@@ -61,6 +77,37 @@ function concat(...arrays: Uint8Array[]): Uint8Array {
   return result;
 }
 
+/** Decode one z polynomial (20-bit signed, 640 bytes) to unsigned mod Q.
+ *  Mirrors MLDSADecode.unpackPolyZ + the z->unsigned conversion in computeWApprox. */
+function decodeZPoly(sig: Uint8Array, base: number): number[] {
+  const out = new Array(256).fill(0);
+  for (let i = 0; i < 128; i++) {
+    const o = base + i * 5;
+    const b0 = sig[o], b1 = sig[o + 1], b2 = sig[o + 2], b3 = sig[o + 3], b4 = sig[o + 4];
+    const v0 = (b0 | (b1 << 8) | (b2 << 16)) & 0xfffff;
+    const v1 = ((b2 >> 4) | (b3 << 4) | (b4 << 12)) & 0xfffff;
+    const c0 = GAMMA1 - v0;
+    const c1 = GAMMA1 - v1;
+    out[i * 2] = ((c0 % Q) + Q) % Q;
+    out[i * 2 + 1] = ((c1 % Q) + Q) % Q;
+  }
+  return out;
+}
+
+/** Decode hint (61 bytes) to K polynomials of {0,1}. Mirrors MLDSADecode.unpackHint. */
+function decodeHint(sig: Uint8Array, base: number): number[][] {
+  const h: number[][] = Array.from({ length: K }, () => new Array(256).fill(0));
+  let prevOffset = 0;
+  for (let poly = 0; poly < K; poly++) {
+    const offset = sig[base + OMEGA + poly];
+    for (let j = prevOffset; j < offset; j++) {
+      h[poly][sig[base + j]] = 1;
+    }
+    prevOffset = offset;
+  }
+  return h;
+}
+
 /**
  * Generate all intermediate verification steps for an ML-DSA-65 signature.
  *
@@ -103,6 +150,9 @@ export function generateHints(
   }
 
   // --- Steps 0-29: ExpandA (SHAKE-128 rejection sampling) ---
+  // A is sampled directly in the NTT domain; keep the matrix for the
+  // polynomial steps below.
+  const aHat: number[][][] = Array.from({ length: K }, () => [] as number[][]);
   for (let i = 0; i < K; i++) {
     for (let j = 0; j < L; j++) {
       const seed = concat(rho, new Uint8Array([j, i])); // col before row
@@ -119,9 +169,11 @@ export function generateHints(
         }
       }
 
+      aHat[i][j] = coeffs;
       const output = encodeCoeffs(coeffs);
       steps.push({
         index: stepIndex,
+        opcode: OP.EXPANDA,
         description: `ExpandA[${i}][${j}]`,
         input: seed,
         output,
@@ -134,6 +186,7 @@ export function generateHints(
   const tr = shake256(publicKey, { dkLen: 64 });
   steps.push({
     index: stepIndex++,
+    opcode: OP.SHAKE256_64,
     description: 'tr = SHAKE-256(pk, 64)',
     input: publicKey,
     output: tr,
@@ -146,6 +199,7 @@ export function generateHints(
   const mu = shake256(muInput, { dkLen: 64 });
   steps.push({
     index: stepIndex++,
+    opcode: OP.SHAKE256_64,
     description: 'mu = SHAKE-256(tr || M\', 64)',
     input: muInput,
     output: mu,
@@ -174,18 +228,91 @@ export function generateHints(
 
   steps.push({
     index: stepIndex++,
+    opcode: OP.SAMPLEINBALL,
     description: 'SampleInBall(c_tilde)',
     input: cTilde,
     output: encodeCoeffs(c),
   });
 
-  // --- Step 33+: Record remaining steps as hashes of intermediate data ---
-  // (NTTs, polynomial operations, UseHint, final hash)
-  // For the Merkle commitment, we hash the step index + input + output
+  // --- Steps 33+: polynomial pipeline, decomposed into primitive ops ---
+  // Each step is one re-executable primitive that MLDSAOptimistic.executeStep
+  // reproduces exactly (enforced by test/OptimisticHintParity.t.sol). Together
+  // they cover the entire w'_approx computation and UseHint — no stub, no gap.
+
+  const pushUnary = (opcode: number, desc: string, input: number[], output: number[]) => {
+    steps.push({
+      index: stepIndex++,
+      opcode,
+      description: desc,
+      input: encodeCoeffs(input),
+      output: encodeCoeffs(output),
+    });
+  };
+  const pushBinary = (opcode: number, desc: string, a: number[], b: number[], output: number[]) => {
+    steps.push({
+      index: stepIndex++,
+      opcode,
+      description: desc,
+      input: concat(encodeCoeffs(a), encodeCoeffs(b)),
+      output: encodeCoeffs(output),
+    });
+  };
+
+  // cHat = NTT(c)
+  const cHat = c.slice();
+  ntt(cHat);
+  pushUnary(OP.NTT, 'NTT(c)', c, cHat);
+
+  // Decode and transform z: zHat[j] = NTT(z[j] mod Q)
+  const zHat: number[][] = [];
+  for (let j = 0; j < L; j++) {
+    const zUnsigned = decodeZPoly(signature, 48 + j * 640);
+    const zh = zUnsigned.slice();
+    ntt(zh);
+    pushUnary(OP.NTT, `NTT(z[${j}])`, zUnsigned, zh);
+    zHat.push(zh);
+  }
+
+  // t1Hat[i] = NTT(t1[i] * 2^d)
+  const t1Hat: number[][] = [];
+  for (let i = 0; i < K; i++) {
+    const scaled = scale2d(t1[i]);
+    pushUnary(OP.SCALE2D, `t1[${i}] * 2^d`, t1[i], scaled);
+    const th = scaled.slice();
+    ntt(th);
+    pushUnary(OP.NTT, `NTT(t1[${i}] * 2^d)`, scaled, th);
+    t1Hat.push(th);
+  }
+
+  // Decode hint
+  const h = decodeHint(signature, 3248);
+
+  // For each row: wApprox[i] = InvNTT( sum_j A_hat[i][j]*z_hat[j] - c_hat*t1_hat[i] )
+  for (let i = 0; i < K; i++) {
+    let acc = new Array(256).fill(0);
+    for (let j = 0; j < L; j++) {
+      const product = pointwiseMul(aHat[i][j], zHat[j]);
+      pushBinary(OP.MUL, `A[${i}][${j}] * z_hat[${j}]`, aHat[i][j], zHat[j], product);
+      const newAcc = pointwiseAdd(acc, product);
+      pushBinary(OP.ADD, `acc[${i}] += product[${j}]`, acc, product, newAcc);
+      acc = newAcc;
+    }
+    const ct1 = pointwiseMul(cHat, t1Hat[i]);
+    pushBinary(OP.MUL, `c_hat * t1_hat[${i}]`, cHat, t1Hat[i], ct1);
+
+    const wApprox = pointwiseSub(acc, ct1);
+    pushBinary(OP.SUB, `w_approx_ntt[${i}]`, acc, ct1, wApprox);
+
+    invNtt(wApprox);
+    pushUnary(OP.INTT, `InvNTT(w_approx[${i}])`, pointwiseSub(acc, ct1), wApprox);
+
+    const w1 = wApprox.map((r, k) => useHint(h[i][k], r));
+    pushBinary(OP.USEHINT, `UseHint(h[${i}], w_approx[${i}])`, h[i], wApprox, w1);
+  }
 
   // Build Merkle tree from all steps
   const leaves = steps.map((step) =>
-    concat(encodeU32(step.index), step.input, step.output),
+    concat(encodeU32(step.index), new Uint8Array([step.opcode]), step.input, step.output),
   );
 
   const merkleTree = buildMerkleTree(leaves);

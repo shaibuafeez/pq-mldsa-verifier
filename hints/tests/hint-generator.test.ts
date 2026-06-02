@@ -18,9 +18,24 @@ describe('generateHints', () => {
     expect(hints.steps.length).toBeGreaterThan(30);
   });
 
-  it('has correct step count (30 ExpandA + tr + mu + SampleInBall = 33)', () => {
+  it('has full step coverage (33 hash/sampling + 102 polynomial primitives = 135)', () => {
+    // 30 ExpandA + tr + mu + SampleInBall = 33
+    // + NTT(c) = 1
+    // + NTT(z[j]) x5 = 5
+    // + (SCALE2D + NTT)(t1[i]) x6 = 12
+    // + per row x6: 5 MUL + 5 ADD + 1 MUL + 1 SUB + 1 INTT + 1 USEHINT = 14 -> 84
+    // total = 135
     const hints = generateHints(publicKey, message, signature);
-    expect(hints.steps.length).toBe(33);
+    expect(hints.steps.length).toBe(135);
+  });
+
+  it('polynomial primitive steps are present (no stub gap)', () => {
+    const hints = generateHints(publicKey, message, signature);
+    const ops = new Set(hints.steps.map((s) => s.opcode));
+    // NTT, INTT, MUL, ADD, SUB, SCALE2D, USEHINT all emitted
+    for (const op of [3, 4, 5, 6, 7, 8, 9]) {
+      expect(ops.has(op)).toBe(true);
+    }
   });
 
   it('produces deterministic merkle root', () => {
@@ -69,6 +84,7 @@ describe('generateHints', () => {
         (step.index >> 16) & 0xff,
         (step.index >> 8) & 0xff,
         step.index & 0xff,
+        step.opcode,
         ...step.input,
         ...step.output,
       ]);

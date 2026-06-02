@@ -216,7 +216,7 @@ library MLDSAVerify {
     }
 
     /// @dev Decompose: r = r1 * alpha + r0 mod Q, with r0 centered.
-    function decompose(uint256 r) private pure returns (uint256 r1, int256 r0) {
+    function decompose(uint256 r) internal pure returns (uint256 r1, int256 r0) {
         uint256 rPos = r % Q;
 
         // Centered mod alpha
@@ -236,7 +236,7 @@ library MLDSAVerify {
     }
 
     /// @dev UseHint for a single coefficient.
-    function useHint(uint256 hint, uint256 r) private pure returns (uint256) {
+    function useHint(uint256 hint, uint256 r) internal pure returns (uint256) {
         (uint256 r1, int256 r0) = decompose(r);
 
         if (hint == 1) {
